@@ -67,16 +67,29 @@ if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
     df_s_raw = load_csv(stock_file)
 
-    # A. KATEGORIFILTER (Bevarat från Row D)
+    # A. KATEGORIFILTER
     cat_col = 'Category' if 'Category' in df_m_raw.columns else df_m_raw.columns[3]
     all_categories = sorted(df_m_raw[cat_col].unique().astype(str).tolist())
     selected_cats = st.sidebar.multiselect("Filter by Category", options=all_categories, default=all_categories)
     df_m_filtered = df_m_raw[df_m_raw[cat_col].isin(selected_cats)].copy()
 
-    # B. SENASTE VECKAN (Bevarat fokus)
+    # B. SENASTE VECKAN (Förbättrad för att hantera årsskiften)
+    col_year = 'Year' if 'Year' in df_m_filtered.columns else df_m_filtered.columns[0]
     col_week = 'Week' if 'Week' in df_m_filtered.columns else df_m_filtered.columns[2]
-    latest_week = clean_numeric(df_m_filtered[col_week]).max()
-    df_m_latest = df_m_filtered[clean_numeric(df_m_filtered[col_week]) == latest_week].copy()
+
+    # Skapa numeriska hjälpkolumner för att hitta senaste tidpunkt
+    df_m_filtered['_year_num'] = clean_numeric(df_m_filtered[col_year])
+    df_m_filtered['_week_num'] = clean_numeric(df_m_filtered[col_week])
+    
+    # Hitta senaste året, och sedan senaste veckan i det året
+    latest_year = df_m_filtered['_year_num'].max()
+    latest_week = df_m_filtered[df_m_filtered['_year_num'] == latest_year]['_week_num'].max()
+    
+    # Filtrera ut endast den senaste veckan
+    df_m_latest = df_m_filtered[
+        (df_m_filtered['_year_num'] == latest_year) & 
+        (df_m_filtered['_week_num'] == latest_week)
+    ].copy()
 
     # C. PREPARERA MARKNADSDATA
     col_sku = 'Config SKU' if 'Config SKU' in df_m_latest.columns else df_m_latest.columns[6]
@@ -98,13 +111,12 @@ if z_marketing and stock_file:
     stock_cols = [c for c in df_s_raw.columns if 'stock' in c.lower()]
     for col in stock_cols: df_s_raw[col] = clean_numeric(df_s_raw[col])
     
-    # Hämta även artikelnamn för snyggare listor
     df_s_names = df_s_raw.groupby('Article')['article_name'].first().reset_index()
     df_s_pivot = df_s_raw.groupby('Article')[stock_cols].sum().reset_index()
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
     df_s_pivot = pd.merge(df_s_pivot, df_s_names, on='Article', how='left')
 
-    # Gap Finder logik
+    # Gap Finder: Artiklar i lager som aldrig dykt upp i hela rapporten
     all_marketing_skus = df_m_raw[col_sku].apply(standardize_sku).unique()
     df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 0) & (~df_s_pivot['Article'].isin(all_marketing_skus))]
 
@@ -120,7 +132,7 @@ if z_marketing and stock_file:
     df['Tier'] = df.apply(assign_tier, axis=1)
 
     # --- 4. DASHBOARD OUTPUT ---
-    st.header(f"📊 MQ Vecka {int(latest_week)} - Resultat & Synk")
+    st.header(f"📊 MQ Vecka {int(latest_week)} ({int(latest_year)}) - Resultat & Synk")
     
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Aktiva Artiklar", len(df))
