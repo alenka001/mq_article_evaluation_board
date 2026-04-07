@@ -5,7 +5,7 @@ import re
 # --- Page Setup ---
 st.set_page_config(page_title="MQ Marketing Expert", layout="wide", page_icon="🚀")
 st.title("🚀 MQ Expert: Final Campaign Sync")
-st.markdown("### Strategisk version: Kampanjbudgetering & Artikel-Tiers")
+st.markdown("### Balanserad version: Strategisk Budgetering & Artikel-Tiers")
 
 # --- 1. UTILITIES ---
 def clean_numeric(series):
@@ -32,8 +32,12 @@ def load_csv(file):
     if file is None: return None
     raw_data = file.read(40000)
     file.seek(0)
-    try: encoding = 'utf-8'; sample = raw_data.decode(encoding)
-    except: encoding = 'latin-1'; sample = raw_data.decode(encoding)
+    try: 
+        encoding = 'utf-8'
+        sample = raw_data.decode(encoding)
+    except: 
+        encoding = 'latin-1'
+        sample = raw_data.decode(encoding)
     sep = ';' if ';' in sample else ','
     file.seek(0)
     return pd.read_csv(file, sep=sep, encoding=encoding)
@@ -46,7 +50,6 @@ with st.sidebar:
     
     st.divider()
     
-    # --- BUDGET INPUT ---
     st.header("💰 Månadsbudget")
     total_monthly_budget = st.number_input("Total Budget för perioden (SEK)", min_value=0, value=100000, step=5000)
     
@@ -86,7 +89,6 @@ if z_marketing and stock_file:
     ].copy()
 
     # C. PREPARERA MARKNADSDATA
-    # Vi läser in Kolumn F (ZMS Campaign) här för budgetering
     col_campaign = 'ZMS Campaign' if 'ZMS Campaign' in df_m_latest.columns else df_m_latest.columns[5]
     col_sku = 'Config SKU' if 'Config SKU' in df_m_latest.columns else df_m_latest.columns[6]
     
@@ -95,25 +97,34 @@ if z_marketing and stock_file:
     df_m_latest['Spend_Val'] = clean_numeric(df_m_latest['Budget spent'] if 'Budget spent' in df_m_latest.columns else df_m_latest.iloc[:, 7])
     df_m_latest['Sold_Val'] = clean_numeric(df_m_latest['Items sold'] if 'Items sold' in df_m_latest.columns else df_m_latest.iloc[:, 15])
     
-    # --- NYTT: BUDGETFÖRDELNING PÅ KAMPANJNIVÅ (KOLUMN F) ---
-   # 1. Beräkna andel av total ROAS
-total_roas = campaign_performance['ROAS_Campaign'].sum()
-campaign_performance['roas_weight'] = campaign_performance['ROAS_Campaign'] / total_roas
+    # --- NYTT: BALANSERAD BUDGETFÖRDELNING PÅ KAMPANJNIVÅ ---
+    # 1. Skapa kampanjtabellen först
+    campaign_performance = df_m_latest.groupby(col_campaign).agg({
+        'GMV_Val': 'sum',
+        'Spend_Val': 'sum'
+    }).reset_index()
+    
+    # 2. Räkna ut ROAS per kampanj
+    campaign_performance['ROAS_Campaign'] = campaign_performance['GMV_Val'] / campaign_performance['Spend_Val'].replace(0, 1)
+    
+    # 3. Beräkna balanserade vikter (50% ROAS, 50% GMV)
+    total_roas_sum = campaign_performance['ROAS_Campaign'].sum()
+    total_gmv_sum = campaign_performance['GMV_Val'].sum()
+    
+    if total_roas_sum > 0 and total_gmv_sum > 0:
+        campaign_performance['roas_weight'] = campaign_performance['ROAS_Campaign'] / total_roas_sum
+        campaign_performance['gmv_weight'] = campaign_performance['GMV_Val'] / total_gmv_sum
+        campaign_performance['combined_weight'] = (campaign_performance['roas_weight'] + campaign_performance['gmv_weight']) / 2
+        campaign_performance['Recommended_Budget'] = campaign_performance['combined_weight'] * total_monthly_budget
+    else:
+        campaign_performance['Recommended_Budget'] = 0
 
-# 2. Beräkna andel av total försäljning (GMV)
-total_gmv = campaign_performance['GMV_Val'].sum()
-campaign_performance['gmv_weight'] = campaign_performance['GMV_Val'] / total_gmv
-
-# 3. Kombinerad vikt (50/50 balans mellan effektivitet och volym)
-campaign_performance['combined_weight'] = (campaign_performance['roas_weight'] + campaign_performance['gmv_weight']) / 2
-
-# 4. Fördela budgeten
-campaign_performance['Recommended_Budget'] = campaign_performance['combined_weight'] * total_monthly_budget
-
-    # D. LAGER & GAP FINDER (Samma som förut)
+    # D. LAGER & GAP FINDER
     df_s_raw['Article'] = df_s_raw['zalando_article_variant'].apply(standardize_sku)
     stock_cols = [c for c in df_s_raw.columns if 'stock' in c.lower()]
-    for col in stock_cols: df_s_raw[col] = clean_numeric(df_s_raw[col])
+    for col in stock_cols: 
+        df_s_raw[col] = clean_numeric(df_s_raw[col])
+    
     df_s_names = df_s_raw.groupby('Article')['article_name'].first().reset_index()
     df_s_pivot = df_s_raw.groupby('Article')[stock_cols].sum().reset_index()
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
@@ -122,9 +133,10 @@ campaign_performance['Recommended_Budget'] = campaign_performance['combined_weig
     all_marketing_skus = df_m_raw[col_sku].apply(standardize_sku).unique()
     df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 0) & (~df_s_pivot['Article'].isin(all_marketing_skus))]
 
-    # E. ARTIKEL-TIERING (Samma som förut)
+    # E. ARTIKEL-TIERING
     col_gender = 'Gender' if 'Gender' in df_m_latest.columns else df_m_latest.columns[4]
     df_m_latest['Group_Draft'] = df_m_latest[col_gender].apply(lambda x: 'FEMALE' if 'dam' in str(x).lower() or 'fem' in str(x).lower() else 'MALE_UNISEX_KIDS')
+    
     df_m_agg = df_m_latest.groupby('Article').agg({
         'GMV_Val': 'sum', 'Spend_Val': 'sum', 'Sold_Val': 'sum', 'Group_Draft': 'first'
     }).reset_index()
@@ -145,32 +157,30 @@ campaign_performance['Recommended_Budget'] = campaign_performance['combined_weig
     
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Totalt Aktiva Artiklar", len(df))
-    m2.metric("Snitt-ROAS (Senaste veckan)", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
-    m3.metric("Potentiell Månadsbudget", f"{total_monthly_budget:,.0f} kr")
+    m2.metric("Vecko-ROAS (Snitt)", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
+    m3.metric("Månadsbudget", f"{total_monthly_budget:,.0f} kr")
     m4.metric("Gap (Utan Kampanj)", len(df_gap))
 
-    # --- NY SEKTION: STRATEGISK BUDGETFÖRDELNING (KAMPANJER) ---
+    # --- STRATEGISK BUDGETFÖRDELNING ---
     st.divider()
-    st.subheader("🎯 Strategisk Budgetfördelning per ZMS Kampanj")
-    st.info("Logik: Budgeten fördelas baserat på kampanjernas ROAS-prestanda i Kolumn F. Högpresterande kampanjer tilldelas en större andel av den totala budgeten.")
+    st.subheader("🎯 Rekommenderad Budgetfördelning per ZMS Kampanj")
+    st.info("Logik: 50% vikt på ROAS (effektivitet) och 50% vikt på GMV (volym).")
     
-    # Visa tabellen för kampanjer
-    formatted_campaigns = campaign_performance.copy()
-    formatted_campaigns.columns = ['ZMS Kampanjnamn', 'Total GMV', 'Spend', 'ROAS', 'Rekommenderad Budget']
+    formatted_campaigns = campaign_performance[[col_campaign, 'GMV_Val', 'ROAS_Campaign', 'Recommended_Budget']].copy()
+    formatted_campaigns.columns = ['ZMS Kampanjnamn', 'Försäljning (GMV)', 'ROAS', 'Föreslagen Månadsbudget']
     st.dataframe(formatted_campaigns.style.format({
-        'Total GMV': '{:,.0f} kr', 
-        'Spend': '{:,.0f} kr', 
+        'Försäljning (GMV)': '{:,.0f} kr', 
         'ROAS': '{:.2f}', 
-        'Rekommenderad Budget': '{:,.0f} kr'
+        'Föreslagen Månadsbudget': '{:,.0f} kr'
     }), use_container_width=True)
 
-    # GAP FINDER & LAGERVARNING (Samma som förut)
+    # GAP FINDER
     st.divider()
     with st.expander("🔍 THE GAP FINDER"):
         st.warning(f"Dessa {len(df_gap)} artiklar har lager men saknar kampanj.")
         st.dataframe(df_gap[['Article', 'article_name', 'Total_Stock']], use_container_width=True)
 
-    # DE 6 HINKARNA (För veckovisa justeringar)
+    # DE 6 HINKARNA
     st.divider()
     st.subheader("📦 Veckovisa Artikel-Tiers (Hinkar)")
     for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
@@ -184,10 +194,5 @@ campaign_performance['Recommended_Budget'] = campaign_performance['combined_weig
                 st.text_area("SKU Lista", ",".join(skus), height=100, key=f"t_{group}_{tier}", label_visibility="collapsed")
                 st.download_button("Export", pd.DataFrame(skus).to_csv(index=False, header=False), f"MQ_{group}_{tier}.csv", key=f"d_{group}_{tier}")
 
-    # INSPEKTÖREN
-    st.divider()
-    with st.expander("🔍 Detaljerad Inspektion"):
-        st.dataframe(df[['Article', 'article_name', 'Tier', 'Total_Stock', 'ROAS_Actual']], use_container_width=True)
-
 else:
-    st.info("👋 Allt är redo. Ladda upp dina filer för att se den strategiska budgetfördelningen.")
+    st.info("👋 Allt är redo. Ladda upp dina filer för att se den balanserade budgetplanen.")
