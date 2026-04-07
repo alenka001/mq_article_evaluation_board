@@ -131,6 +131,8 @@ if z_marketing and stock_file:
     df_s_pivot = pd.merge(df_s_pivot, df_s_names, on='Article', how='left')
 
     all_marketing_skus = df_m_raw[col_sku].apply(standardize_sku).unique()
+    # REGEL: Endast artiklar med MER ÄN 10 i lager som saknar kampanj
+    all_marketing_skus = df_m_raw[col_sku].apply(standardize_sku).unique()
     df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 10) & (~df_s_pivot['Article'].isin(all_marketing_skus))]
 
     # E. ARTIKEL-TIERING
@@ -180,6 +182,15 @@ if z_marketing and stock_file:
         st.warning(f"Dessa {len(df_gap)} artiklar har lager men saknar kampanj.")
         st.dataframe(df_gap[['Article', 'article_name', 'Total_Stock']], use_container_width=True)
 
+    # --- ÅTERSTÄLLD LAGVARNINGSSEKTION ---
+    st.divider()
+    warnings = df[(df['Tier'] == 'TOP') & (df['Days_Left'] < days_threshold) & (df['Sold_Val'] > 0)]
+    if not warnings.empty:
+        st.error(f"🔥 LAGERVARNING: {len(warnings)} TOP-artiklar tar slut snart!")
+        st.dataframe(warnings[['Article', 'article_name', 'Total_Stock', 'Sold_Val', 'Days_Left']].sort_values('Days_Left'), use_container_width=True)
+    else:
+        st.success("✅ Alla TOP-artiklar har stabila lagernivåer.")
+
     # DE 6 HINKARNA
     st.divider()
     st.subheader("📦 Veckovisa Artikel-Tiers (Hinkar)")
@@ -194,7 +205,7 @@ if z_marketing and stock_file:
                 st.text_area("SKU Lista", ",".join(skus), height=100, key=f"t_{group}_{tier}", label_visibility="collapsed")
                 st.download_button("Export", pd.DataFrame(skus).to_csv(index=False, header=False), f"MQ_{group}_{tier}.csv", key=f"d_{group}_{tier}")
 
-# --- INSPEKTÖREN (NU ÅTERSTÄLLD!) ---
+# --- INSPEKTÖREN ---
     st.divider()
     with st.expander("🔍 Detaljerad Inspektion"):
         st.info("Här kan du se rådatan för alla artiklar som ingår i den aktuella analysen.")
