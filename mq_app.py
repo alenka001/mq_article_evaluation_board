@@ -131,7 +131,7 @@ if z_marketing and stock_file:
     df_s_pivot = pd.merge(df_s_pivot, df_s_names, on='Article', how='left')
 
     all_marketing_skus = df_m_raw[col_sku].apply(standardize_sku).unique()
-    df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 0) & (~df_s_pivot['Article'].isin(all_marketing_skus))]
+    df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 10) & (~df_s_pivot['Article'].isin(all_marketing_skus))]
 
     # E. ARTIKEL-TIERING
     col_gender = 'Gender' if 'Gender' in df_m_latest.columns else df_m_latest.columns[4]
@@ -159,7 +159,7 @@ if z_marketing and stock_file:
     m1.metric("Totalt Aktiva Artiklar", len(df))
     m2.metric("Vecko-ROAS (Snitt)", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
     m3.metric("Månadsbudget", f"{total_monthly_budget:,.0f} kr")
-    m4.metric("Gap (Utan Kampanj)", len(df_gap))
+    m4.metric("Gap (Lager > 10)", len(df_gap))
 
     # --- STRATEGISK BUDGETFÖRDELNING ---
     st.divider()
