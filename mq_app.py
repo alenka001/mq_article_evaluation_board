@@ -96,17 +96,19 @@ if z_marketing and stock_file:
     df_m_latest['Sold_Val'] = clean_numeric(df_m_latest['Items sold'] if 'Items sold' in df_m_latest.columns else df_m_latest.iloc[:, 15])
     
     # --- NYTT: BUDGETFÖRDELNING PÅ KAMPANJNIVÅ (KOLUMN F) ---
-    campaign_performance = df_m_latest.groupby(col_campaign).agg({
-        'GMV_Val': 'sum',
-        'Spend_Val': 'sum'
-    }).reset_index()
-    campaign_performance['ROAS_Campaign'] = campaign_performance['GMV_Val'] / campaign_performance['Spend_Val'].replace(0, 1)
-    
-    total_campaign_roas = campaign_performance['ROAS_Campaign'].sum()
-    if total_campaign_roas > 0:
-        campaign_performance['Recommended_Budget'] = (campaign_performance['ROAS_Campaign'] / total_campaign_roas) * total_monthly_budget
-    else:
-        campaign_performance['Recommended_Budget'] = 0
+   # 1. Beräkna andel av total ROAS
+total_roas = campaign_performance['ROAS_Campaign'].sum()
+campaign_performance['roas_weight'] = campaign_performance['ROAS_Campaign'] / total_roas
+
+# 2. Beräkna andel av total försäljning (GMV)
+total_gmv = campaign_performance['GMV_Val'].sum()
+campaign_performance['gmv_weight'] = campaign_performance['GMV_Val'] / total_gmv
+
+# 3. Kombinerad vikt (50/50 balans mellan effektivitet och volym)
+campaign_performance['combined_weight'] = (campaign_performance['roas_weight'] + campaign_performance['gmv_weight']) / 2
+
+# 4. Fördela budgeten
+campaign_performance['Recommended_Budget'] = campaign_performance['combined_weight'] * total_monthly_budget
 
     # D. LAGER & GAP FINDER (Samma som förut)
     df_s_raw['Article'] = df_s_raw['zalando_article_variant'].apply(standardize_sku)
