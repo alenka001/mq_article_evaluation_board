@@ -194,5 +194,11 @@ if z_marketing and stock_file:
                 st.text_area("SKU Lista", ",".join(skus), height=100, key=f"t_{group}_{tier}", label_visibility="collapsed")
                 st.download_button("Export", pd.DataFrame(skus).to_csv(index=False, header=False), f"MQ_{group}_{tier}.csv", key=f"d_{group}_{tier}")
 
+# --- INSPEKTÖREN (NU ÅTERSTÄLLD!) ---
+    st.divider()
+    with st.expander("🔍 Detaljerad Inspektion"):
+        st.info("Här kan du se rådatan för alla artiklar som ingår i den aktuella analysen.")
+        st.dataframe(df[['Article', 'article_name', 'Tier', 'Total_Stock', 'ROAS_Actual', 'GMV_Val', 'Spend_Val', 'Sold_Val']], use_container_width=True)
+
 else:
     st.info("👋 Allt är redo. Ladda upp dina filer för att se den balanserade budgetplanen.")
