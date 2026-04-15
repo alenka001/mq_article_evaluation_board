@@ -120,7 +120,7 @@ if z_marketing and stock_file:
     df = pd.merge(df_m_agg, df_s_pivot[['Article', 'Total_Stock', 'article_name', 'Price_Val']], on='Article', how='left').fillna(0)
     
     # REGEL: Ignorera artiklar med pris 0
-    df = df[df['Price_Val'] > 0].copy()
+    df = df[(df['Price_Val'] > 0) & (df['Total_Stock'] >= 1)].copy()
     
     df['Daily_Velocity'] = df['Sold_Val'] / 7
     df['Days_Left'] = df['Total_Stock'] / df['Daily_Velocity'].replace(0, 0.001)
@@ -147,9 +147,7 @@ if z_marketing and stock_file:
 
     # --- HINKARNA (PRIS ELLER KÖN) ---
     if use_price_grouping:
-        st.subheader("📦 Pris-segmentering (Heltäckande hinkar)")
-        
-        # Definerade målpriser
+        st.subheader("📦 Pris-segmentering (Minst 1 i lager)")
         targets = [399, 699, 899, 1199]
         
         for tier in ['TOP', 'MEDIUM', 'LOW']:
@@ -160,25 +158,32 @@ if z_marketing and stock_file:
             for idx, target in enumerate(targets):
                 with cols[idx]:
                     if target == 399:
-                        # Allt under 500 kr
                         bucket_df = tier_df[tier_df['Price_Val'] < 500]
                         label = "399 kr (Under 500)"
                     elif target == 699:
-                        # Allt mellan 500 och 799 (Fångar 520-550)
                         bucket_df = tier_df[(tier_df['Price_Val'] >= 500) & (tier_df['Price_Val'] < 799)]
                         label = "699 kr (500-799)"
                     elif target == 899:
-                        # Allt mellan 799 och 1049
                         bucket_df = tier_df[(tier_df['Price_Val'] >= 799) & (tier_df['Price_Val'] < 1049)]
                         label = "899 kr (799-1049)"
-                    else: # 1199
-                        # Allt över 1049 (Fångar allt över 1199)
+                    else:
                         bucket_df = tier_df[tier_df['Price_Val'] >= 1049]
                         label = "1199+ kr (Över 1049)"
                     
                     st.markdown(f"**{label}**")
                     st.metric("Antal", len(bucket_df))
-                    st.text_area("SKUs", ",".join(bucket_df['Article'].tolist()), height=150, key=f"p_{tier}_{target}", label_visibility="collapsed")
+                    skus = bucket_df['Article'].tolist()
+                    st.text_area("SKUs", ",".join(skus), height=150, key=f"p_{tier}_{target}", label_visibility="collapsed")
+                    
+                    # NYTT: Export-knapp för prishinken
+                    if len(skus) > 0:
+                        st.download_button(
+                            label=f"Download {target} SKUs",
+                            data=pd.DataFrame(skus).to_csv(index=False, header=False),
+                            file_name=f"MQ_{tier}_{target}_SKUs.csv",
+                            mime="text/csv",
+                            key=f"dl_{tier}_{target}"
+                        )
     else:
         for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
             st.markdown(f"#### {group}")
