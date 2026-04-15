@@ -9,17 +9,21 @@ st.markdown("### Balanserad version: Strategisk Budgetering & Artikel-Tiers")
 
 # --- 1. UTILITIES (Robust motor) ---
 def clean_numeric(series):
-    """Hanterar tal, valutasymboler och europeiska format (komma/punkt)."""
+    """Säker hantering av tal: Hindrar 1.0 från att bli 10 och hanterar europeiska format."""
     if pd.api.types.is_numeric_dtype(series):
         return series.fillna(0)
+    
     def handle_string(x):
         s = str(x).strip()
-        s = re.sub(r'[^\d,\.-]', '', s) # Tar bort €, kr, etc.
+        # Ta bort valutasymboler och mellanslag, behåll siffror, komman och punkter
+        s = re.sub(r'[^\d,\.-]', '', s)
         if not s: return 0.0
+        # Hantera europeiskt format: 1.234,56 -> 1234.56
         if ',' in s and '.' in s: s = s.replace('.', '').replace(',', '.')
         elif ',' in s: s = s.replace(',', '.')
         try: return float(s)
         except: return 0.0
+            
     return series.apply(handle_string).fillna(0)
 
 def standardize_sku(sku):
@@ -31,9 +35,9 @@ def standardize_sku(sku):
     return s
 
 def load_csv(file):
-    """Läser in CSV med automatisk detektering av separator och encoding."""
+    """Läser in CSV med automatisk detektering av separator och städning av kolumner."""
     if file is None: return None
-    raw_data = file.read(50000)
+    raw_data = file.read(60000)
     file.seek(0)
     try: 
         encoding = 'utf-8'
@@ -46,12 +50,13 @@ def load_csv(file):
     sep = ';' if ';' in sample else ','
     file.seek(0)
     df = pd.read_csv(file, sep=sep, encoding=encoding)
-    # Rensa bort eventuella dolda mellanslag i kolumnnamn
+    
+    # Rensa bort eventuella dolda mellanslag i kolumnnamn (vanligt fel)
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
 def find_col(df, preferred_name, fallback_idx):
-    """Hittar en kolumn via namn (case-insensitive) eller index som fallback."""
+    """Hittar en kolumn via namn (oberoende av små/stora bokstäver) eller index som reserv."""
     cols = df.columns.tolist()
     for c in cols:
         if c.lower() == preferred_name.lower():
@@ -87,7 +92,7 @@ if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
     df_s_raw = load_csv(stock_file)
 
-    # Identifiera huvudkolumner i marknadsfilen
+    # Identifiera huvudkolumner i marknadsfilen dynamiskt
     cat_col = find_col(df_m_raw, 'Category', 3)
     year_col = find_col(df_m_raw, 'Year', 0)
     week_col = find_col(df_m_raw, 'Week', 2)
@@ -100,7 +105,7 @@ if z_marketing and stock_file:
     selected_cats = st.sidebar.multiselect("Filter by Category", options=all_categories, default=all_categories)
     df_m_filtered = df_m_raw[df_m_raw[cat_col].isin(selected_cats)].copy()
 
-    # B. SENASTE VECKAN (Hanterar årsskiften korrekt)
+    # B. SENASTE VECKAN (Hanterar årsskiften)
     df_m_filtered['_year_num'] = clean_numeric(df_m_filtered[year_col])
     df_m_filtered['_week_num'] = clean_numeric(df_m_filtered[week_col])
     
@@ -112,13 +117,13 @@ if z_marketing and stock_file:
         (df_m_filtered['_week_num'] == latest_week)
     ].copy()
 
-    # C. PREPARERA MARKNADSDATA (Beräkna GMV, Spend, Sold)
+    # C. PREPARERA MARKNADSDATA
     df_m_latest['Article'] = df_m_latest[sku_col].apply(standardize_sku)
     df_m_latest['GMV_Val'] = clean_numeric(df_m_latest['GMV'] if 'GMV' in df_m_latest.columns else df_m_latest.iloc[:, 16])
     df_m_latest['Spend_Val'] = clean_numeric(df_m_latest['Budget spent'] if 'Budget spent' in df_m_latest.columns else df_m_latest.iloc[:, 7])
     df_m_latest['Sold_Val'] = clean_numeric(df_m_latest['Items sold'] if 'Items sold' in df_m_latest.columns else df_m_latest.iloc[:, 15])
     
-    # --- NYTT: BALANSERAD BUDGETFÖRDELNING PÅ KAMPANJNIVÅ ---
+    # --- BALANSERAD BUDGETFÖRDELNING PÅ KAMPANJNIVÅ ---
     campaign_performance = df_m_latest.groupby(camp_col).agg({
         'GMV_Val': 'sum',
         'Spend_Val': 'sum'
@@ -126,7 +131,6 @@ if z_marketing and stock_file:
     
     campaign_performance['ROAS_Campaign'] = campaign_performance['GMV_Val'] / campaign_performance['Spend_Val'].replace(0, 1)
     
-    # Beräkna vikter (50% ROAS, 50% GMV)
     total_roas_sum = campaign_performance['ROAS_Campaign'].sum()
     total_gmv_sum = campaign_performance['GMV_Val'].sum()
     
@@ -139,7 +143,6 @@ if z_marketing and stock_file:
         campaign_performance['Recommended_Budget'] = 0
 
     # D. LAGER & GAP FINDER
-    # Lagerfilens kolumner
     s_sku_col = find_col(df_s_raw, 'zalando_article_variant', 4)
     df_s_raw['Article'] = df_s_raw[s_sku_col].apply(standardize_sku)
     stock_cols = [c for c in df_s_raw.columns if 'stock' in c.lower()]
@@ -150,7 +153,7 @@ if z_marketing and stock_file:
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
     df_s_pivot = pd.merge(df_s_pivot, df_s_names, on='Article', how='left')
 
-    # GAP FINDER: Kolla mot hela historiken (df_m_raw) för att se vad som saknas helt
+    # GAP FINDER: Lager > 10 som saknas i HELA marknadsfilen
     all_marketing_skus = df_m_raw[sku_col].apply(standardize_sku).unique()
     df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 10) & (~df_s_pivot['Article'].isin(all_marketing_skus))]
 
@@ -176,12 +179,12 @@ if z_marketing and stock_file:
     st.header(f"📊 MQ Vecka {int(latest_week)} ({int(latest_year)}) - Strategisk Planering")
     
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Totalt Aktiva Artiklar", len(df))
+    m1.metric("Aktiva Artiklar", len(df))
     m2.metric("Vecko-ROAS (Snitt)", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
     m3.metric("Månadsbudget", f"{total_monthly_budget:,.0f} kr")
     m4.metric("Gap (Lager > 10)", len(df_gap))
 
-    # --- STRATEGISK BUDGETFÖRDELNING ---
+    # STRATEGISK BUDGETFÖRDELNING
     st.divider()
     st.subheader("🎯 Rekommenderad Budgetfördelning per ZMS Kampanj")
     st.info("Logik: 50% vikt på ROAS (effektivitet) och 50% vikt på GMV (volym).")
@@ -204,7 +207,7 @@ if z_marketing and stock_file:
     warnings = df[(df['Tier'] == 'TOP') & (df['Days_Left'] < days_threshold) & (df['Sold_Val'] > 0)]
     if not warnings.empty:
         st.error(f"🔥 LAGERVARNING: {len(warnings)} TOP-artiklar tar slut snart!")
-        st.dataframe(warnings[['Article', 'article_name', 'Total_Stock', 'Sold_Val', 'Days_Left']].sort_values('Days_Left'), use_container_width=True)
+        st.dataframe(warnings[['Article', 'article_name', 'Total_Stock', 'Days_Left']].sort_values('Days_Left'), use_container_width=True)
     else:
         st.success("✅ Alla TOP-artiklar har stabila lagernivåer.")
 
