@@ -68,7 +68,6 @@ with st.sidebar:
     st.divider()
     st.header("⚖️ Pris-segmentering")
     use_price_grouping = st.checkbox("Aktivera Fasta Prishinkar", value=True)
-    price_targets_input = st.text_input("Målvärden", value="399, 699, 899, 1199")
     
     st.divider()
     days_threshold = st.slider("Stock Alert (Days):", 1, 14, 5)
@@ -119,6 +118,10 @@ if z_marketing and stock_file:
     df_m_agg['ROAS_Actual'] = df_m_agg['GMV_Val'] / df_m_agg['Spend_Val'].replace(0, 1)
     
     df = pd.merge(df_m_agg, df_s_pivot[['Article', 'Total_Stock', 'article_name', 'Price_Val']], on='Article', how='left').fillna(0)
+    
+    # REGEL: Ignorera artiklar med pris 0
+    df = df[df['Price_Val'] > 0].copy()
+    
     df['Daily_Velocity'] = df['Sold_Val'] / 7
     df['Days_Left'] = df['Total_Stock'] / df['Daily_Velocity'].replace(0, 0.001)
 
@@ -137,43 +140,45 @@ if z_marketing and stock_file:
     m3.metric("Budget", f"{total_monthly_budget:,.0f} kr")
     
     all_m_skus = df_m_raw[sku_col].apply(standardize_sku).unique()
-    df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 10) & (~df_s_pivot['Article'].isin(all_m_skus))]
+    df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 10) & (~df_s_pivot['Article'].isin(all_m_skus)) & (df_s_pivot['Price_Val'] > 0)]
     m4.metric("Gap (Lager > 10)", len(df_gap))
 
     st.divider()
 
     # --- HINKARNA (PRIS ELLER KÖN) ---
     if use_price_grouping:
-        st.subheader("📦 Pris-segmentering (±30% per Målpris)")
-        target_list = sorted([float(x.strip()) for x in price_targets_input.split(",")])
+        st.subheader("📦 Pris-segmentering (Heltäckande hinkar)")
+        
+        # Definerade målpriser
+        targets = [399, 699, 899, 1199]
         
         for tier in ['TOP', 'MEDIUM', 'LOW']:
             st.markdown(f"## Tier: {tier}")
             tier_df = df[df['Tier'] == tier].copy()
-            cols = st.columns(len(target_list) + 1)
-            assigned_skus = set()
+            cols = st.columns(len(targets))
             
-            for idx, target in enumerate(target_list):
+            for idx, target in enumerate(targets):
                 with cols[idx]:
-                    low, high = target * 0.7, target * 1.3
-                    # Speciell logik för sista hinken (t.ex. 1199+)
-                    if target == target_list[-1]:
-                        bucket_df = tier_df[tier_df['Price_Val'] >= low]
-                        label = f"{int(target)}+ kr"
-                    else:
-                        bucket_df = tier_df[(tier_df['Price_Val'] >= low) & (tier_df['Price_Val'] <= high)]
-                        label = f"~{int(target)} kr"
+                    if target == 399:
+                        # Allt under 500 kr
+                        bucket_df = tier_df[tier_df['Price_Val'] < 500]
+                        label = "399 kr (Under 500)"
+                    elif target == 699:
+                        # Allt mellan 500 och 799 (Fångar 520-550)
+                        bucket_df = tier_df[(tier_df['Price_Val'] >= 500) & (tier_df['Price_Val'] < 799)]
+                        label = "699 kr (500-799)"
+                    elif target == 899:
+                        # Allt mellan 799 och 1049
+                        bucket_df = tier_df[(tier_df['Price_Val'] >= 799) & (tier_df['Price_Val'] < 1049)]
+                        label = "899 kr (799-1049)"
+                    else: # 1199
+                        # Allt över 1049 (Fångar allt över 1199)
+                        bucket_df = tier_df[tier_df['Price_Val'] >= 1049]
+                        label = "1199+ kr (Över 1049)"
                     
-                    assigned_skus.update(bucket_df['Article'].tolist())
                     st.markdown(f"**{label}**")
-                    st.metric("Antal", len(bucket_df), help=f"Range: {int(low)}-{int(high)} kr")
+                    st.metric("Antal", len(bucket_df))
                     st.text_area("SKUs", ",".join(bucket_df['Article'].tolist()), height=150, key=f"p_{tier}_{target}", label_visibility="collapsed")
-
-            with cols[-1]:
-                outliers = tier_df[~tier_df['Article'].isin(assigned_skus)]
-                st.markdown("**Övriga/Price Gaps**")
-                st.metric("Antal", len(outliers))
-                st.text_area("SKUs", ",".join(outliers['Article'].tolist()), height=150, key=f"p_{tier}_out", label_visibility="collapsed")
     else:
         for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
             st.markdown(f"#### {group}")
