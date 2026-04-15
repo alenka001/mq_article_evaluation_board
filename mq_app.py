@@ -7,13 +7,14 @@ st.set_page_config(page_title="MQ Marketing Expert", layout="wide", page_icon="�
 st.title("🚀 MQ Expert: Final Campaign Sync")
 st.markdown("### Balanserad version: Strategisk Budgetering & Artikel-Tiers")
 
-# --- 1. UTILITIES ---
+# --- 1. UTILITIES (Robust motor) ---
 def clean_numeric(series):
+    """Hanterar tal, valutasymboler och europeiska format (komma/punkt)."""
     if pd.api.types.is_numeric_dtype(series):
         return series.fillna(0)
     def handle_string(x):
         s = str(x).strip()
-        s = re.sub(r'[^\d,\.-]', '', s)
+        s = re.sub(r'[^\d,\.-]', '', s) # Tar bort €, kr, etc.
         if not s: return 0.0
         if ',' in s and '.' in s: s = s.replace('.', '').replace(',', '.')
         elif ',' in s: s = s.replace(',', '.')
@@ -22,6 +23,7 @@ def clean_numeric(series):
     return series.apply(handle_string).fillna(0)
 
 def standardize_sku(sku):
+    """Standardiserar SKU till Config ID (t.ex. ABC-123)."""
     s = str(sku).strip().upper().replace('.0', '')
     if '-' in s:
         parts = s.split('-')
@@ -29,8 +31,9 @@ def standardize_sku(sku):
     return s
 
 def load_csv(file):
+    """Läser in CSV med automatisk detektering av separator och encoding."""
     if file is None: return None
-    raw_data = file.read(40000)
+    raw_data = file.read(50000)
     file.seek(0)
     try: 
         encoding = 'utf-8'
@@ -38,9 +41,24 @@ def load_csv(file):
     except: 
         encoding = 'latin-1'
         sample = raw_data.decode(encoding)
+    
+    # Detektera separator (prioritera semikolon för MQ-rapporter)
     sep = ';' if ';' in sample else ','
     file.seek(0)
-    return pd.read_csv(file, sep=sep, encoding=encoding)
+    df = pd.read_csv(file, sep=sep, encoding=encoding)
+    # Rensa bort eventuella dolda mellanslag i kolumnnamn
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+def find_col(df, preferred_name, fallback_idx):
+    """Hittar en kolumn via namn (case-insensitive) eller index som fallback."""
+    cols = df.columns.tolist()
+    for c in cols:
+        if c.lower() == preferred_name.lower():
+            return c
+    if fallback_idx < len(cols):
+        return cols[fallback_idx]
+    return cols[0]
 
 # --- 2. SIDEBAR ---
 with st.sidebar:
@@ -69,17 +87,23 @@ if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
     df_s_raw = load_csv(stock_file)
 
+    # Identifiera huvudkolumner i marknadsfilen
+    cat_col = find_col(df_m_raw, 'Category', 3)
+    year_col = find_col(df_m_raw, 'Year', 0)
+    week_col = find_col(df_m_raw, 'Week', 2)
+    sku_col = find_col(df_m_raw, 'Config SKU', 6)
+    gender_col = find_col(df_m_raw, 'Gender', 4)
+    camp_col = find_col(df_m_raw, 'ZMS Campaign', 5)
+
     # A. KATEGORIFILTER
-    cat_col = 'Category' if 'Category' in df_m_raw.columns else df_m_raw.columns[3]
     all_categories = sorted(df_m_raw[cat_col].unique().astype(str).tolist())
     selected_cats = st.sidebar.multiselect("Filter by Category", options=all_categories, default=all_categories)
     df_m_filtered = df_m_raw[df_m_raw[cat_col].isin(selected_cats)].copy()
 
-    # B. SENASTE VECKAN
-    col_year = 'Year' if 'Year' in df_m_filtered.columns else df_m_filtered.columns[0]
-    col_week = 'Week' if 'Week' in df_m_filtered.columns else df_m_filtered.columns[2]
-    df_m_filtered['_year_num'] = clean_numeric(df_m_filtered[col_year])
-    df_m_filtered['_week_num'] = clean_numeric(df_m_filtered[col_week])
+    # B. SENASTE VECKAN (Hanterar årsskiften korrekt)
+    df_m_filtered['_year_num'] = clean_numeric(df_m_filtered[year_col])
+    df_m_filtered['_week_num'] = clean_numeric(df_m_filtered[week_col])
+    
     latest_year = df_m_filtered['_year_num'].max()
     latest_week = df_m_filtered[df_m_filtered['_year_num'] == latest_year]['_week_num'].max()
     
@@ -88,26 +112,21 @@ if z_marketing and stock_file:
         (df_m_filtered['_week_num'] == latest_week)
     ].copy()
 
-    # C. PREPARERA MARKNADSDATA
-    col_campaign = 'ZMS Campaign' if 'ZMS Campaign' in df_m_latest.columns else df_m_latest.columns[5]
-    col_sku = 'Config SKU' if 'Config SKU' in df_m_latest.columns else df_m_latest.columns[6]
-    
-    df_m_latest['Article'] = df_m_latest[col_sku].apply(standardize_sku)
+    # C. PREPARERA MARKNADSDATA (Beräkna GMV, Spend, Sold)
+    df_m_latest['Article'] = df_m_latest[sku_col].apply(standardize_sku)
     df_m_latest['GMV_Val'] = clean_numeric(df_m_latest['GMV'] if 'GMV' in df_m_latest.columns else df_m_latest.iloc[:, 16])
     df_m_latest['Spend_Val'] = clean_numeric(df_m_latest['Budget spent'] if 'Budget spent' in df_m_latest.columns else df_m_latest.iloc[:, 7])
     df_m_latest['Sold_Val'] = clean_numeric(df_m_latest['Items sold'] if 'Items sold' in df_m_latest.columns else df_m_latest.iloc[:, 15])
     
     # --- NYTT: BALANSERAD BUDGETFÖRDELNING PÅ KAMPANJNIVÅ ---
-    # 1. Skapa kampanjtabellen först
-    campaign_performance = df_m_latest.groupby(col_campaign).agg({
+    campaign_performance = df_m_latest.groupby(camp_col).agg({
         'GMV_Val': 'sum',
         'Spend_Val': 'sum'
     }).reset_index()
     
-    # 2. Räkna ut ROAS per kampanj
     campaign_performance['ROAS_Campaign'] = campaign_performance['GMV_Val'] / campaign_performance['Spend_Val'].replace(0, 1)
     
-    # 3. Beräkna balanserade vikter (50% ROAS, 50% GMV)
+    # Beräkna vikter (50% ROAS, 50% GMV)
     total_roas_sum = campaign_performance['ROAS_Campaign'].sum()
     total_gmv_sum = campaign_performance['GMV_Val'].sum()
     
@@ -120,24 +139,23 @@ if z_marketing and stock_file:
         campaign_performance['Recommended_Budget'] = 0
 
     # D. LAGER & GAP FINDER
-    df_s_raw['Article'] = df_s_raw['zalando_article_variant'].apply(standardize_sku)
+    # Lagerfilens kolumner
+    s_sku_col = find_col(df_s_raw, 'zalando_article_variant', 4)
+    df_s_raw['Article'] = df_s_raw[s_sku_col].apply(standardize_sku)
     stock_cols = [c for c in df_s_raw.columns if 'stock' in c.lower()]
-    for col in stock_cols: 
-        df_s_raw[col] = clean_numeric(df_s_raw[col])
+    for col in stock_cols: df_s_raw[col] = clean_numeric(df_s_raw[col])
     
     df_s_names = df_s_raw.groupby('Article')['article_name'].first().reset_index()
     df_s_pivot = df_s_raw.groupby('Article')[stock_cols].sum().reset_index()
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
     df_s_pivot = pd.merge(df_s_pivot, df_s_names, on='Article', how='left')
 
-    all_marketing_skus = df_m_raw[col_sku].apply(standardize_sku).unique()
-    # REGEL: Endast artiklar med MER ÄN 10 i lager som saknar kampanj
-    all_marketing_skus = df_m_raw[col_sku].apply(standardize_sku).unique()
+    # GAP FINDER: Kolla mot hela historiken (df_m_raw) för att se vad som saknas helt
+    all_marketing_skus = df_m_raw[sku_col].apply(standardize_sku).unique()
     df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 10) & (~df_s_pivot['Article'].isin(all_marketing_skus))]
 
     # E. ARTIKEL-TIERING
-    col_gender = 'Gender' if 'Gender' in df_m_latest.columns else df_m_latest.columns[4]
-    df_m_latest['Group_Draft'] = df_m_latest[col_gender].apply(lambda x: 'FEMALE' if 'dam' in str(x).lower() or 'fem' in str(x).lower() else 'MALE_UNISEX_KIDS')
+    df_m_latest['Group_Draft'] = df_m_latest[gender_col].apply(lambda x: 'FEMALE' if 'dam' in str(x).lower() or 'fem' in str(x).lower() else 'MALE_UNISEX_KIDS')
     
     df_m_agg = df_m_latest.groupby('Article').agg({
         'GMV_Val': 'sum', 'Spend_Val': 'sum', 'Sold_Val': 'sum', 'Group_Draft': 'first'
@@ -155,7 +173,7 @@ if z_marketing and stock_file:
     df['Tier'] = df.apply(assign_tier, axis=1)
 
     # --- 4. DASHBOARD OUTPUT ---
-    st.header(f"📊 MQ Vecka {int(latest_week)} - Strategisk Planering")
+    st.header(f"📊 MQ Vecka {int(latest_week)} ({int(latest_year)}) - Strategisk Planering")
     
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Totalt Aktiva Artiklar", len(df))
@@ -168,7 +186,7 @@ if z_marketing and stock_file:
     st.subheader("🎯 Rekommenderad Budgetfördelning per ZMS Kampanj")
     st.info("Logik: 50% vikt på ROAS (effektivitet) och 50% vikt på GMV (volym).")
     
-    formatted_campaigns = campaign_performance[[col_campaign, 'GMV_Val', 'ROAS_Campaign', 'Recommended_Budget']].copy()
+    formatted_campaigns = campaign_performance[[camp_col, 'GMV_Val', 'ROAS_Campaign', 'Recommended_Budget']].copy()
     formatted_campaigns.columns = ['ZMS Kampanjnamn', 'Försäljning (GMV)', 'ROAS', 'Föreslagen Månadsbudget']
     st.dataframe(formatted_campaigns.style.format({
         'Försäljning (GMV)': '{:,.0f} kr', 
@@ -177,12 +195,11 @@ if z_marketing and stock_file:
     }), use_container_width=True)
 
     # GAP FINDER
-    st.divider()
     with st.expander("🔍 THE GAP FINDER"):
-        st.warning(f"Dessa {len(df_gap)} artiklar har lager men saknar kampanj.")
-        st.dataframe(df_gap[['Article', 'article_name', 'Total_Stock']], use_container_width=True)
+        st.warning(f"Dessa {len(df_gap)} artiklar har lager > 10 men saknar kampanj helt.")
+        st.dataframe(df_gap[['Article', 'article_name', 'Total_Stock']].sort_values('Total_Stock', ascending=False), use_container_width=True)
 
-    # --- ÅTERSTÄLLD LAGVARNINGSSEKTION ---
+    # LAGERVARNING
     st.divider()
     warnings = df[(df['Tier'] == 'TOP') & (df['Days_Left'] < days_threshold) & (df['Sold_Val'] > 0)]
     if not warnings.empty:
@@ -205,10 +222,9 @@ if z_marketing and stock_file:
                 st.text_area("SKU Lista", ",".join(skus), height=100, key=f"t_{group}_{tier}", label_visibility="collapsed")
                 st.download_button("Export", pd.DataFrame(skus).to_csv(index=False, header=False), f"MQ_{group}_{tier}.csv", key=f"d_{group}_{tier}")
 
-# --- INSPEKTÖREN ---
+    # INSPEKTÖREN
     st.divider()
     with st.expander("🔍 Detaljerad Inspektion"):
-        st.info("Här kan du se rådatan för alla artiklar som ingår i den aktuella analysen.")
         st.dataframe(df[['Article', 'article_name', 'Tier', 'Total_Stock', 'ROAS_Actual', 'GMV_Val', 'Spend_Val', 'Sold_Val']], use_container_width=True)
 
 else:
