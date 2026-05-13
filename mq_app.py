@@ -72,6 +72,60 @@ with st.sidebar:
     st.divider()
     days_threshold = st.slider("Stock Alert (Days):", 1, 14, 5)
 
+# --- MAIN DASHBOARD LOGIC ---
+if f_mkt:
+    # 1. LOAD MARKET DATA
+    try:
+        df = pd.read_csv(f_mkt, sep=';', engine='python', encoding='utf-8')
+    except:
+        f_mkt.seek(0)
+        df = pd.read_csv(f_mkt, sep=';', engine='python', encoding='ISO-8859-1')
+    
+    df.columns = [c.strip() for c in df.columns]
+    
+    m_cols = {
+        'Spend': 'Budget spent', 'GMV': 'GMV', 'Wish': 'Add to wishlist', 
+        'Clicks': 'Clicks', 'Sold': 'Items sold', 'Impressions': 'Viewable ad impressions',
+        'PDP_Views': 'PDP views', 'Cart': 'Add to cart'
+    }
+    for k, v in m_cols.items():
+        if v in df.columns: df[k] = df[v].apply(clean_val)
+        else: df[k] = 0.0
+
+    # 2. LOAD INVENTORY DATA & PIVOT (RESTORED WORKING SCRIPT)
+    inv_map, stock_map = {}, {}
+    if f_inv:
+        try:
+            df_inv = pd.read_csv(f_inv, sep=';', engine='python', encoding='utf-8')
+        except:
+            f_inv.seek(0)
+            df_inv = pd.read_csv(f_inv, sep=';', engine='python', encoding='ISO-8859-1')
+        
+        df_inv.columns = [c.strip().lower() for c in df_inv.columns]
+        
+        # Återställer sökningen efter Zalando_Article_Variant
+        inv_sku_col = next((c for c in df_inv.columns if 'zalando_article_variant' in c), None)
+        name_col = next((c for c in df_inv.columns if 'article_name' in c), None)
+        
+        if inv_sku_col:
+            df_inv[inv_sku_col] = df_inv[inv_sku_col].astype(str).str.strip().str.upper()
+            df_inv['zfs_clean'] = df_inv.get('sellable_zfs_stock', 0).apply(clean_val)
+            df_inv['pf_clean'] = df_inv.get('sellable_pf_stock', 0).apply(clean_val)
+            
+            # PIVOT efter Zalando_Article_Variant (Återställt)
+            inv_pivoted = df_inv.groupby(inv_sku_col).agg({
+                name_col if name_col else inv_sku_col: 'first',
+                'zfs_clean': 'sum',
+                'pf_clean': 'sum'
+            }).reset_index()
+            
+            inv_map = inv_pivoted.set_index(inv_sku_col)[name_col if name_col else inv_sku_col].to_dict()
+            stock_map = inv_pivoted.set_index(inv_sku_col)[['zfs_clean', 'pf_clean']].sum(axis=1).to_dict()
+
+    df['Config SKU Match'] = df['Config SKU'].astype(str).str.strip().str.upper()
+    df['ArticleName'] = df['Config SKU Match'].map(inv_map).fillna(df['Config SKU'])
+    df['TotalStock'] = df['Config SKU Match'].map(stock_map).fillna(0)
+
 # --- 3. DATA PROCESSING ---
 if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
