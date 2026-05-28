@@ -18,8 +18,10 @@ def clean_numeric(series):
         if not s: return 0.0
         if ',' in s and '.' in s: s = s.replace('.', '').replace(',', '.')
         elif ',' in s: s = s.replace(',', '.')
-        try:  float(s)
-        except:  0.0
+        try:  
+            return float(s)
+        except:  
+            return 0.0
     return series.apply(handle_string).fillna(0)
 
 def standardize_sku(sku):
@@ -82,46 +84,49 @@ if z_marketing and stock_file:
     return_map = {}
     if return_file:
         df_r = load_csv(return_file)
-        # Hitta kolumner i returfilen
-        r_type_col = find_col(df_r, 'Article type', 0)
-        r_rate_col = find_col(df_r, 'Estimated return rate', 12)
+        r_type_col = find_col(df_r, 'Article type', 0) [cite: 1]
+        r_rate_col = find_col(df_r, 'Estimated return rate', 12) [cite: 2]
         
-        # Tvätta procentvärden (t.ex. "44.1%" -> 0.441)
         def parse_percent(x):
             s = str(x).replace('%', '').strip()
-            return float(s) / 100.0
-            return 0.0
+            try: return float(s) / 100.0
+            except: return 0.0
             
         df_r['Return_Rate_Clean'] = df_r[r_rate_col].apply(parse_percent)
         
-        # Skapa en ordbok för snabb sökning på artikeltyp
         for _, row in df_r.iterrows():
-            return_map[str(row[r_type_col]).strip().lower()] = row['Return_Rate_Clean']
+            return_map[str(row[r_type_col]).strip().lower()] = row['Return_Rate_Clean'] [cite: 1, 2]
 
-    # Funktion för att mappa marknadsföringens 'Category' till rätt 'Article Type' i returfilen
+    # Funktion för att mappa marknadsföringens 'Category' till rätt 'Article Type' baserat på din CSV
     def get_return_rate_by_category(cat_name):
         c = str(cat_name).strip().lower()
-        # Dina anpassade MQ-mappningsregler:
-        if 'jean' in c or 'denim' in c or 'trouser' in c or 'byxa' in c:
-            return return_map.get('trouser', 0.45) # Fallback på 45% om ej hittad
-        if 'tailor' in c or 'jacket' in c or 'kavaj' in c or 'coat' in c:
-            return return_map.get('coat', 0.55)
-        if 'shirt' in c or 'skjorta' in c:
-            return return_map.get('shirt', 0.51)
-        if 'dress' in c or 'klänning' in c:
-            return return_map.get('dress', 0.60)
-        if 't-shirt' in c or 'top' in c:
-            return return_map.get('t-shirt top', 0.42)
-        if 'pullover' in c or 'stickat' in c or 'sweater' in c:
-            return return_map.get('pullover', 0.44)
-        if 'cardigan' in c:
-            return return_map.get('cardigan', 0.50)
         
-        # Generell sökning om inget matchade ovanför
+        # Siffror direkt matchade mot din bifogade data:
+        if 'jean' in c or 'denim' in c or 'trouser' in c or 'byxa' in c:
+            return return_map.get('trouser', 0.622) [cite: 2]
+        if 'tailor' in c or 'coat' in c:
+            return return_map.get('coat', 0.598) [cite: 2]
+        if 'jacket' in c or 'kavaj' in c:
+            return return_map.get('jacket', 0.657) [cite: 2]
+        if 'shirt' in c or 'skjorta' in c:
+            return return_map.get('shirt', 0.512) [cite: 2]
+        if 'dress' in c or 'klänning' in c:
+            return return_map.get('dress', 0.561) [cite: 2]
+        if 't-shirt' in c or 'top' in c:
+            return return_map.get('t-shirt top', 0.423) [cite: 2]
+        if 'pullover' in c or 'stickat' in c or 'sweater' in c:
+            return return_map.get('pullover', 0.441) [cite: 2]
+        if 'cardigan' in c:
+            return return_map.get('cardigan', 0.503) [cite: 2]
+        if 'skirt' in c or 'kjol' in c:
+            return return_map.get('skirt', 0.519) [cite: 2]
+        if 'vest' in c or 'väst' in c:
+            return return_map.get('vest', 0.237) [cite: 2]
+        
         for k, v in return_map.items():
             if k in c or c in k:
                 return v
-        return 0.45 # Standardfallback för MQ om kategorin är helt okänd
+        return 0.45
 
     # 1. Mappa mätvärden till marknadsdata
     m_cols_map = {
@@ -192,7 +197,6 @@ if z_marketing and stock_file:
     df_m_latest['Article'] = df_m_latest[sku_col].apply(standardize_sku)
     df_m_latest['Group_Draft'] = df_m_latest[gender_col].apply(lambda x: 'FEMALE' if 'dam' in str(x).lower() or 'fem' in str(x).lower() else 'MALE_UNISEX_KIDS')
     
-    # Spara undan kategori per artikel för returjusteringen
     df_m_agg = df_m_latest.groupby('Article').agg({
         'GMV_Val':'sum', 
         'Spend_Val':'sum', 
@@ -204,10 +208,8 @@ if z_marketing and stock_file:
     df = pd.merge(df_m_agg, df_s_pivot, left_on='Article', right_on='Article_Match', how='left').fillna(0)
     df['ROAS_Actual'] = df['GMV_Val'] / df['Spend_Val'].replace(0, 1)
     
-    # Applicera returgrad per artikel
     df['Estimated_Return_Rate'] = df[cat_col].apply(get_return_rate_by_category)
     
-    # Regel: ignorera artiklar utan giltigt pris eller som är helt slutsålda
     df = df[(df['Price_Val'] > 0) & (df['Total_Stock'] >= 1)].copy()
     
     df['Daily_Velocity'] = df['Sold_Val'] / 7
@@ -217,13 +219,11 @@ if z_marketing and stock_file:
     def assign_tier(row):
         return_rate = row['Estimated_Return_Rate']
         
-        # Om returgraden är hög (56% eller mer), höjer vi kraven för att bli TOP/MEDIUM
-        if return_rate >= 0.56:
-            required_t_roas = t_roas_base + 1.5  # Kräver t.ex. 5.5 istället för 4.0
-            required_m_roas = m_roas_base + 1.0  # Kräver t.ex. 3.0 istället för 2.0
+        if return_rate >= 0.50:
+            required_t_roas = t_roas_base + 1.5
+            required_m_roas = m_roas_base + 1.0
         else:
-            # Låg returgrad = Vi är mer tillåtande och sänker kraven något
-            required_t_roas = max(3.0, t_roas_base - 0.5) 
+            required_t_roas = max(3.0, t_roas_base - 0.5)
             required_m_roas = max(1.5, m_roas_base - 0.5)
 
         if row['Total_Stock'] >= t_stock and row['ROAS_Actual'] >= required_t_roas: 
@@ -233,6 +233,7 @@ if z_marketing and stock_file:
         return 'LOW'
         
     df['Tier'] = df.apply(assign_tier, axis=1)
+    df['Target_MED_ROAS'] = df['Estimated_Return_Rate'].apply(lambda x: m_roas_base + 1.0 if x >= 0.50 else max(1.5, m_roas_base - 0.5))
 
     # --- 4. DASHBOARD OUTPUT ---
     st.header(f"📊 MQ Vecka {int(latest_week)} - Strategisk Planering")
@@ -242,18 +243,15 @@ if z_marketing and stock_file:
     m2.metric("ROAS (W)", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
     m3.metric("Månadsbudget", f"{total_monthly_budget:,.0f} kr")
     
-    # Gap Finder beräkning (Lager > 10 och saknas i marknadsföring)
     all_marketing_skus = df_m_raw[sku_col].apply(standardize_sku).unique()
     df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 10) & (~df_s_pivot['Article_Match'].isin(all_marketing_skus))]
     m4.metric("Gap (Stock > 10)", len(df_gap))
 
-    # Visa status på returrapporten
     if return_file:
         st.success("✅ Dynamisk returjustering aktiv: ROAS-mål baseras på artikelns Estimated Return Rate.")
     else:
         st.warning("⚠️ Ingen returfil uppladdad. Systemet använder standardiserade MQ-fallbacks för returjusterad ROAS.")
 
-    # Visa rekommenderad budget
     st.subheader("🎯 Rekommenderad Budget per Kampanj")
     st.dataframe(campaign_performance[[camp_col, 'GMV_Val', 'ROAS_Campaign', 'Recommended_Budget']].style.format({
         'GMV_Val': '{:,.0f} kr', 'ROAS_Campaign': '{:.2f}', 'Recommended_Budget': '{:,.0f} kr'
@@ -310,8 +308,8 @@ if z_marketing and stock_file:
         st.error(f"🔥 LAGERVARNING: {len(warnings)} TOP-artiklar tar slut snart!")
         st.dataframe(warnings[['Article', name_col if name_col else 'Article', 'Total_Stock', 'Sold_Val', 'Days_Left']], use_container_width=True)
 
-    with st.expander("🔍 Detaljerad Inspektion (Här ser du beräknad returgrad per artikel)"):
-        st.dataframe(df[['Article', name_col if name_col else 'Article', 'Tier', 'Price_Val', 'Total_Stock', 'ROAS_Actual', 'Estimated_Return_Rate']], use_container_width=True)
+    with st.expander("🔍 Detaljerad Inspektion (Här ser du varför produkter blir LOW)"):
+        st.dataframe(df[['Article', name_col if name_col else 'Article', 'Tier', 'Total_Stock', 'ROAS_Actual', 'Target_MED_ROAS', 'Estimated_Return_Rate']], use_container_width=True)
 
 else:
     st.info("👋 Allt är redo. Ladda upp dina filer för att starta analysen.")
