@@ -18,8 +18,8 @@ def clean_numeric(series):
         if not s: return 0.0
         if ',' in s and '.' in s: s = s.replace('.', '').replace(',', '.')
         elif ',' in s: s = s.replace(',', '.')
-        try: return float(s)
-        except: return 0.0
+        try:  float(s)
+        except:  0.0
     return series.apply(handle_string).fillna(0)
 
 def standardize_sku(sku):
@@ -217,8 +217,8 @@ if z_marketing and stock_file:
     def assign_tier(row):
         return_rate = row['Estimated_Return_Rate']
         
-        # Om returgraden är hög (50% eller mer), höjer vi kraven för att bli TOP/MEDIUM
-        if return_rate >= 0.50:
+        # Om returgraden är hög (56% eller mer), höjer vi kraven för att bli TOP/MEDIUM
+        if return_rate >= 0.56:
             required_t_roas = t_roas_base + 1.5  # Kräver t.ex. 5.5 istället för 4.0
             required_m_roas = m_roas_base + 1.0  # Kräver t.ex. 3.0 istället för 2.0
         else:
