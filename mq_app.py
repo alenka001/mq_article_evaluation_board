@@ -89,8 +89,8 @@ if z_marketing and stock_file:
         # Tvätta procentvärden (t.ex. "44.1%" -> 0.441)
         def parse_percent(x):
             s = str(x).replace('%', '').strip()
-            try: return float(s) / 100.0
-            except: return 0.0
+            return float(s) / 100.0
+            return 0.0
             
         df_r['Return_Rate_Clean'] = df_r[r_rate_col].apply(parse_percent)
         
