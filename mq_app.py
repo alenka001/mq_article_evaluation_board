@@ -76,27 +76,26 @@ with st.sidebar:
     days_threshold = st.slider("Stock Alert (Days):", 1, 14, 5)
 
 # --- 3. DATA PROCESSING ---
-# --- 3. DATA PROCESSING ---
 if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
     df_s_raw = load_csv(stock_file)
 
-    # Läs in returdata om den finns
-    return_map = {}
-    if return_file:
-        df_r = load_csv(return_file)
-        r_type_col = find_col(df_r, 'Article type', 0)
-        r_rate_col = find_col(df_r, 'Estimated return rate', 12)
+# Läs in returdata om den finns
+return_map = {}
+if return_file:
+    df_r = load_csv(return_file)
+    r_type_col = find_col(df_r, 'Article type', 0)
+    r_rate_col = find_col(df_r, 'Estimated return rate', 12)
         
-        def parse_percent(x):
-            s = str(x).replace('%', '').strip()
-            try: return float(s) / 100.0
-            except: return 0.0
+    def parse_percent(x):
+        s = str(x).replace('%', '').strip()
+        try: return float(s) / 100.0
+        except: return 0.0
             
-        df_r['Return_Rate_Clean'] = df_r[r_rate_col].apply(parse_percent)
+    df_r['Return_Rate_Clean'] = df_r[r_rate_col].apply(parse_percent)
         
-        for _, row in df_r.iterrows():
-            return_map[str(row[r_type_col]).strip().lower()] = row['Return_Rate_Clean']
+    for _, row in df_r.iterrows():
+        return_map[str(row[r_type_col]).strip().lower()] = row['Return_Rate_Clean']
 
     # Funktion för att mappa marknadsföringens 'Category' till rätt 'Article Type' baserat på din CSV
     def get_return_rate_by_category(cat_name):
