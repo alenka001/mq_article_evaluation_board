@@ -310,7 +310,7 @@ if z_marketing and stock_file:
         st.error(f"🔥 LAGERVARNING: {len(warnings)} TOP-artiklar tar slut snart!")
         st.dataframe(warnings[['Article', name_col if name_col else 'Article', 'Total_Stock', 'Sold_Val', 'Days_Left']], use_container_width=True)
 
-    with st.expander("🔍 Detaljerad Inspektion (Här ser du beräknad returgrad per artikel)")
+    with st.expander("🔍 Detaljerad Inspektion (Här ser du beräknad returgrad per artikel)"):
         st.dataframe(df[['Article', name_col if name_col else 'Article', 'Tier', 'Price_Val', 'Total_Stock', 'ROAS_Actual', 'Estimated_Return_Rate']], use_container_width=True)
 
 else:
