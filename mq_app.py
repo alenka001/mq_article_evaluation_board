@@ -80,8 +80,8 @@ if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
     df_s_raw = load_csv(stock_file)
 
-# Läs in returdata om den finns
-return_map = {}
+    # Läs in returdata om den finns (Här är indragen fixade!)
+    return_map = {}
     if return_file:
         df_r = load_csv(return_file)
         r_type_col = find_col(df_r, 'Article type', 0)
