@@ -234,9 +234,13 @@ if z_marketing and stock_file:
     m2.metric("ROAS (W)", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
     m3.metric("Månadsbudget", f"{total_monthly_budget:,.0f} kr")
     
+    # --- DYNAMISK FINDE-LOGIK FÖR ENBART ZFS LAGER ---
+    zfs_col_name = next((c for c in df_s_pivot.columns if 'zfs' in c), 'Total_Stock')
     all_marketing_skus = df_m_raw[sku_col].apply(standardize_sku).unique()
-    df_gap = df_s_pivot[(df_s_pivot['Total_Stock'] > 10) & (~df_s_pivot['Article_Match'].isin(all_marketing_skus))]
-    m4.metric("Gap (Stock > 10)", len(df_gap))
+    
+    # REGEL: Nu letar Gap Finder enbart efter artiklar där ZFS-saldot är över 10
+    df_gap = df_s_pivot[(df_s_pivot[zfs_col_name] > 10) & (~df_s_pivot['Article_Match'].isin(all_marketing_skus))]
+    m4.metric("Gap (ZFS Stock > 10)", len(df_gap))
 
     if return_file: st.success("✅ Kampanjer strategiskt uppdelade baserat på din inskickade returfil.")
     else: st.warning("⚠️ Ingen returfil uppladdad. Körs med MQ standard-fallbacks.")
@@ -295,15 +299,13 @@ if z_marketing and stock_file:
     # --- SYSTEMBEVAKNING & DETALJER ---
     st.divider()
     
-    # --- UPPDATERAD GAP FINDER MED INTELIGENTA REKOMMENDATIONER OCH EXPORT ---
-    with st.expander("🔍 THE GAP FINDER (Lager > 10 utan Kampanj)"):
+    # --- GAP FINDER JUSTERAD FÖR ATT ENBART EVALUERA ZFS LAGER ---
+    with st.expander("🔍 THE GAP FINDER (ZFS Lager > 10 utan Kampanj)"):
         if not df_gap.empty:
-            st.warning(f"Hittade {len(df_gap)} artiklar med ett starkt lagersaldo som helt saknar marknadsföring. Här är rekommenderad budstrategi baserat på produktens returrisk:")
+            st.warning(f"Hittade {len(df_gap)} artiklar med ett starkt ZFS-lagersaldo (>10) som helt saknar marknadsföring i Sku-rapporten. Här är rekommenderad budstrategi baserat på produktens specifika returrisk:")
             
-            # Funktion för att analysera namnet och ge rätt rekommendation på dolda artiklar
             def get_gap_recommendation(row):
                 name = str(row[name_col] if name_col else row['Article_Match']).lower()
-                # Matcha mot returgrader via sökord i produktnamnet
                 if any(x in name for x in ['jean', 'denim', 'trouser', 'byxa']): rr = return_map.get('trouser', 0.622)
                 elif any(x in name for x in ['tailor', 'coat']): rr = return_map.get('coat', 0.598)
                 elif any(x in name for x in ['jacket', 'kavaj']): rr = return_map.get('jacket', 0.657)
@@ -319,7 +321,8 @@ if z_marketing and stock_file:
                 if rr >= 0.50:
                     return f"🚨 HÖG RETUR (Target ROAS: {high_return_target})"
                 else:
-                    if row['Total_Stock'] >= t_stock:
+                    # Även rekommendationen baseras på ZFS-saldot nu
+                    if row[zfs_col_name] >= t_stock:
                         return f"🔥 LÅG RETUR - TOP (Target ROAS: {t_roas_base})"
                     else:
                         return f"⚡ LÅG RETUR - MEDIUM (Target ROAS: {m_roas_base})"
@@ -327,23 +330,21 @@ if z_marketing and stock_file:
             df_gap_enriched = df_gap.copy()
             df_gap_enriched['Föreslagen Kampanjstrategi'] = df_gap_enriched.apply(get_gap_recommendation, axis=1)
             
-            # Snygga till tabellen för användaren
             col_display_name = name_col if name_col else 'Article_Match'
-            df_gap_final = df_gap_enriched[['Article_Match', col_display_name, 'Total_Stock', 'Price_Val', 'Föreslagen Kampanjstrategi']].sort_values('Total_Stock', ascending=False)
-            df_gap_final.columns = ['SKU', 'Produktnamn', 'Lagersaldo', 'Medianpris', 'Föreslagen Kampanjstrategi']
+            df_gap_final = df_gap_enriched[['Article_Match', col_display_name, zfs_col_name, 'Total_Stock', 'Price_Val', 'Föreslagen Kampanjstrategi']].sort_values(zfs_col_name, ascending=False)
+            df_gap_final.columns = ['SKU', 'Produktnamn', 'ZFS Lagersaldo', 'Total-Lager (ZFS+PF)', 'Medianpris', 'Föreslagen Kampanjstrategi']
             
             st.dataframe(df_gap_final, use_container_width=True)
             
-            # Skapa CSV-fil för nedladdning
             csv_data = df_gap_final.to_csv(index=False, encoding='utf-8')
             st.download_button(
                 label="📥 Ladda ner Gap-översikt med Strategirekommendationer (CSV)",
                 data=csv_data,
-                file_name="MQ_Gap_Articles_Campaign_Recommendations.csv",
+                file_name="MQ_Gap_ZFS_Campaign_Recommendations.csv",
                 mime="text/csv"
             )
         else:
-            st.success("✅ Strålande! Inga gap hittades. Alla artiklar med över 10 i lager körs redan i aktiva kampanjer.")
+            st.success("✅ Strålande! Inga gap hittades. Alla artiklar med över 10 i ZFS-lager körs redan i aktiva kampanjer.")
 
     warnings = df[(df['Tier'].str.contains("TOP|HÖG")) & (df['Days_Left'] < days_threshold) & (df['Sold_Val'] > 0)]
     if not warnings.empty:
