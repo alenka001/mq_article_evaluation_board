@@ -62,7 +62,7 @@ with st.sidebar:
     
     st.divider()
     st.header("🎯 Returbaserad Strategi")
-    high_return_target = st.number_input("Target ROAS: Högretur-produkter", min_value=1.0, value=13.0, help="Alla produkter med returgrad >= 50% hamnar här")
+    high_return_target = st.number_input("Target ROAS: Högretur-produkter", min_value=1.0, value=13.0, help="Produkter med returgrad >= 50% skyddas med detta höga mål")
     
     st.divider()
     st.header("💰 Budget & Tiers (Lågretur-mål)")
@@ -100,7 +100,7 @@ if z_marketing and stock_file:
         for _, row in df_r.iterrows():
             return_map[str(row[r_type_col]).strip().lower()] = row['Return_Rate_Clean']
 
-    # Funktion för att mappa marknadsföringens 'Category' till rätt 'Article Type' baserat på din CSV
+    # Funktion för att mappa marknadsföringens 'Category' till rätt 'Article Type'
     def get_return_rate_by_category(cat_name):
         c = str(cat_name).strip().lower()
         if 'jean' in c or 'denim' in c or 'trouser' in c or 'byxa' in c:
@@ -201,25 +201,25 @@ if z_marketing and stock_file:
     df['Daily_Velocity'] = df['Sold_Val'] / 7
     df['Days_Left'] = df['Total_Stock'] / df['Daily_Velocity'].replace(0, 0.001)
 
-    # --- NY DYNAMISK BUDSTRATEGI-LOGIK ---
+    # --- STRATEGISK LOGIK ---
     def assign_strategic_tier(row):
+        if row['Total_Stock'] < m_stock:
+            return "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
+            
         return_rate = row['Estimated_Return_Rate']
         
-        # REGEL 1: Om produkten har hög returgrad, ska den tvingas in i Högretur-kampanjen (Target ROAS 13)
         if return_rate >= 0.50:
             return f"🚨 HÖG RETUR (Target ROAS: {high_return_target})"
         
-        # REGEL 2: Om produkten har låg returgrad, fördelas den efter prestanda och kan ligga på lägre ROAS-mål
         if row['Total_Stock'] >= t_stock and row['ROAS_Actual'] >= t_roas_base:
             return f"🔥 LÅG RETUR - TOP (Target ROAS: {t_roas_base})"
-        elif row['Total_Stock'] >= m_stock and row['ROAS_Actual'] >= m_roas_base:
+        elif row['ROAS_Actual'] >= m_roas_base:
             return f"⚡ LÅG RETUR - MEDIUM (Target ROAS: {m_roas_base})"
         
-        return "⚠️ LOW PERFORMANCE / SLUTSLAGRAT"
+        return "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
         
     df['Tier'] = df.apply(assign_strategic_tier, axis=1)
 
-    # Sätt det avsedda ROAS-målet per produkt för granskning
     def set_target_roas(row):
         if "HÖG RETUR" in row['Tier']: return high_return_target
         if "LOW" in row['Tier']: return 0.0
@@ -248,34 +248,42 @@ if z_marketing and stock_file:
 
     st.divider()
 
-    # --- DE NYA STRATEGISKA HINKARNA ---
+    # --- STRATEGISKA KAMPANJHINKAR ---
     strategic_tiers = [
         f"🚨 HÖG RETUR (Target ROAS: {high_return_target})",
         f"🔥 LÅG RETUR - TOP (Target ROAS: {t_roas_base})",
         f"⚡ LÅG RETUR - MEDIUM (Target ROAS: {m_roas_base})",
-        "⚠️ LOW PERFORMANCE / SLUTSLAGRAT"
+        "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
     ]
 
     if use_price_grouping:
-        st.subheader("📦 Strategiska Kampanjhinkar uppdelade efter Pris-segment")
-        targets = [399, 699, 899, 1199]
+        st.subheader("📦 Strategiska Kampanjhinkar (Förenklad Pris-klustring)")
         for tier in strategic_tiers:
             st.markdown(f"### {tier}")
             tier_df = df[df['Tier'] == tier].copy()
-            cols = st.columns(len(targets))
-            for idx, target in enumerate(targets):
-                with cols[idx]:
-                    if target == 399: bucket_df = tier_df[tier_df['Price_Val'] < 500]; label = "399 kr (Under 500)"
-                    elif target == 699: bucket_df = tier_df[(tier_df['Price_Val'] >= 500) & (tier_df['Price_Val'] < 799)]; label = "699 kr (500-799)"
-                    elif target == 899: bucket_df = tier_df[(tier_df['Price_Val'] >= 799) & (tier_df['Price_Val'] < 1049)]; label = "899 kr (799-1049)"
-                    else: bucket_df = tier_df[tier_df['Price_Val'] >= 1049]; label = "1199+ kr (Över 1049)"
-                    
-                    st.markdown(f"**{label}**")
-                    st.metric("Antal SKUs", len(bucket_df))
-                    skus = bucket_df['Article'].tolist()
-                    st.text_area("SKUs", ",".join(skus), height=130, key=f"p_{tier}_{target}", label_visibility="collapsed")
-                    if skus:
-                        st.download_button(f"Export SKUs", pd.DataFrame(skus).to_csv(index=False, header=False), f"MQ_Bidding_{tier}_{target}.csv", key=f"dl_{tier}_{target}")
+            
+            # Skapar 2 kolumner istället för 4
+            cols = st.columns(2)
+            
+            # Hink 1: Under 599 kr
+            with cols[0]:
+                bucket_df = tier_df[tier_df['Price_Val'] < 599]
+                st.markdown("**💰 Under 599 kr**")
+                st.metric("Antal SKUs", len(bucket_df))
+                skus = bucket_df['Article'].tolist()
+                st.text_area("SKUs", ",".join(skus), height=130, key=f"p_{tier}_under_599", label_visibility="collapsed")
+                if skus:
+                    st.download_button(f"Export SKUs", pd.DataFrame(skus).to_csv(index=False, header=False), f"MQ_Bidding_{tier}_under_599.csv", key=f"dl_{tier}_under_599")
+            
+            # Hink 2: Över eller lika med 599 kr
+            with cols[1]:
+                bucket_df = tier_df[tier_df['Price_Val'] >= 599]
+                st.markdown("**💎 599 kr eller över**")
+                st.metric("Antal SKUs", len(bucket_df))
+                skus = bucket_df['Article'].tolist()
+                st.text_area("SKUs", ",".join(skus), height=130, key=f"p_{tier}_over_599", label_visibility="collapsed")
+                if skus:
+                    st.download_button(f"Export SKUs", pd.DataFrame(skus).to_csv(index=False, header=False), f"MQ_Bidding_{tier}_over_599.csv", key=f"dl_{tier}_over_599")
     else:
         for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
             st.subheader(f"📂 {group} Strategiska Listor")
