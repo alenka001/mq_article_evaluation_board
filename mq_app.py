@@ -103,25 +103,25 @@ if z_marketing and stock_file:
         
         # Siffror direkt matchade mot din bifogade data:
         if 'jean' in c or 'denim' in c or 'trouser' in c or 'byxa' in c:
-            return return_map.get('trouser', 0.622) [cite: 2]
+            return return_map.get('trouser', 0.622)
         if 'tailor' in c or 'coat' in c:
-            return return_map.get('coat', 0.598) [cite: 2]
+            return return_map.get('coat', 0.598)
         if 'jacket' in c or 'kavaj' in c:
-            return return_map.get('jacket', 0.657) [cite: 2]
+            return return_map.get('jacket', 0.657)
         if 'shirt' in c or 'skjorta' in c:
-            return return_map.get('shirt', 0.512) [cite: 2]
+            return return_map.get('shirt', 0.512)
         if 'dress' in c or 'klänning' in c:
-            return return_map.get('dress', 0.561) [cite: 2]
+            return return_map.get('dress', 0.561)
         if 't-shirt' in c or 'top' in c:
-            return return_map.get('t-shirt top', 0.423) [cite: 2]
+            return return_map.get('t-shirt top', 0.423)
         if 'pullover' in c or 'stickat' in c or 'sweater' in c:
-            return return_map.get('pullover', 0.441) [cite: 2]
+            return return_map.get('pullover', 0.441)
         if 'cardigan' in c:
-            return return_map.get('cardigan', 0.503) [cite: 2]
+            return return_map.get('cardigan', 0.503)
         if 'skirt' in c or 'kjol' in c:
-            return return_map.get('skirt', 0.519) [cite: 2]
+            return return_map.get('skirt', 0.519)
         if 'vest' in c or 'väst' in c:
-            return return_map.get('vest', 0.237) [cite: 2]
+            return return_map.get('vest', 0.237)
         
         for k, v in return_map.items():
             if k in c or c in k:
