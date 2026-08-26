@@ -244,9 +244,9 @@ if z_marketing and stock_file:
     def resolve_days_online(row):
         sku = row['Article']
         if sku in days_online_map:
-            return days_online_map[sku]
+            return float(days_online_map[sku])
         if row['Days_Online_Val'] > 0 and row['Days_Online_Val'] != 999:
-            return row['Days_Online_Val']
+            return float(row['Days_Online_Val'])
         return 999.0
 
     df['Days_Online'] = df.apply(resolve_days_online, axis=1)
@@ -265,32 +265,37 @@ if z_marketing and stock_file:
     def assign_strategic_tier(row):
         # Hink 1: Nyheter (Nyligen gått live)
         if row['Days_Online'] <= max_days_new:
-            return f"🆕 NEW ARRIVALS (Live ≤ {max_days_new} dagar)"
+            return f"NEW ARRIVALS (Live ≤ {max_days_new} dagar)"
             
         # Hink 2: Hög returgrad (Endast om aktiverat via checkbox)
         if use_high_return_tier and row['Estimated_Return_Rate'] >= 0.50:
-            return f"🚨 HÖG RETUR (Target ROAS: {high_return_target})"
+            return f"HÖG RETUR (Target ROAS: {high_return_target})"
             
         # Hink 3: Låg Retur (Standard Strategy)
         if row['Total_Stock'] >= t_stock and row['ROAS_Actual'] >= t_roas_base:
-            return f"🔥 LÅG RETUR (Standard Strategy - Target ROAS: {t_roas_base})"
+            return f"LÅG RETUR (Standard Strategy - Target ROAS: {t_roas_base})"
             
         # Hink 4: Low Performance / Paused Strategy (ENBART för produkter med minst 1 i lager)
         if row['Total_Stock'] >= 1:
-            return "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
+            return "LOW PERFORMANCE / PAUSED STRATEGY"
             
         return "EXCLUDE"
         
     df['Tier'] = df.apply(assign_strategic_tier, axis=1)
     df = df[df['Tier'] != "EXCLUDE"].copy()
 
-    def set_target_roas(row):
-        if "NEW ARRIVALS" in row['Tier']: return t_roas_base
-        if "HÖG RETUR" in row['Tier']: return high_return_target
-        if "LOW PERFORMANCE" in row['Tier']: return 0.0
-        return t_roas_base
-        
-    df['Target_ROAS'] = df.apply(set_target_roas, axis=1)
+    # SÄKER VEKTORISERAD SET_TARGET_ROAS (FÖRHINDRAR VALUEERROR)
+    conditions = [
+        df['Tier'].str.contains("NEW ARRIVALS", na=False),
+        df['Tier'].str.contains("HÖG RETUR", na=False),
+        df['Tier'].str.contains("LOW PERFORMANCE", na=False)
+    ]
+    choices = [
+        float(t_roas_base),
+        float(high_return_target),
+        0.0
+    ]
+    df['Target_ROAS'] = np.select(conditions, choices, default=float(t_roas_base))
 
     # --- 4. DASHBOARD OUTPUT ---
     st.header(f"Vecka {int(latest_week)} - Strategisk Planering")
@@ -310,7 +315,7 @@ if z_marketing and stock_file:
     df_gap = df_s_pivot[(df_s_pivot[zfs_col_name] > 10) & (~df_s_pivot['Article_Match'].isin(all_marketing_skus))]
     m4.metric("Gap (ZFS Stock > 10)", len(df_gap))
 
-    st.subheader("Rekommenderad Budget per Kampanj")
+    st.subheader("🎯 Rekommenderad Budget per Kampanj")
     st.dataframe(campaign_performance[[camp_col, 'GMV_Val', 'ROAS_Campaign', 'Recommended_Budget']].style.format({
         'GMV_Val': '{:,.0f} kr', 'ROAS_Campaign': '{:.2f}', 'Recommended_Budget': '{:,.0f} kr'
     }), use_container_width=True)
@@ -320,12 +325,11 @@ if z_marketing and stock_file:
     # --- STRATEGISKA KAMPANJHINKAR ---
     strategic_tiers = [f"NEW ARRIVALS (Live ≤ {max_days_new} dagar)"]
     if use_high_return_tier:
-        strategic_tiers.append(f"HÖG RETUR (Target ROAS: {high_return_target})")
+        strategic_tiers.append(f" HÖG RETUR (Target ROAS: {high_return_target})")
     strategic_tiers.extend([
         f"LÅG RETUR (Standard Strategy - Target ROAS: {t_roas_base})",
         "LOW PERFORMANCE / PAUSED STRATEGY"
     ])
-
     st.subheader("Strategiska Kampanjhinkar (Deduplicerade SKUs)")
     
     for tier in strategic_tiers:
@@ -338,7 +342,7 @@ if z_marketing and stock_file:
         
         if skus:
             st.download_button(
-                label=f"Ladda ner CSV för {tier}",
+                label=f"📥 Ladda ner CSV för {tier}",
                 data=pd.DataFrame(skus, columns=['SKU']).to_csv(index=False, header=False),
                 file_name=f"MQ_Campaign_{tier.split(' ')[0]}.csv",
                 mime="text/csv",
@@ -347,7 +351,7 @@ if z_marketing and stock_file:
         st.divider()
 
     # --- SYSTEMBEVAKNING & DETALJER ---
-    with st.expander("THE GAP FINDER (ZFS Lager > 10 utan Kampanj)"):
+    with st.expander("🔍 THE GAP FINDER (ZFS Lager > 10 utan Kampanj)"):
         if not df_gap.empty:
             st.warning(f"Hittade {len(df_gap)} artiklar med ett starkt ZFS-lagersaldo (>10) som helt saknar marknadsföring.")
             col_display_name = name_col if name_col else 'Article_Match'
@@ -355,10 +359,10 @@ if z_marketing and stock_file:
             df_gap_final.columns = ['SKU', 'Produktnamn', 'ZFS Lagersaldo', 'Total-Lager']
             st.dataframe(df_gap_final, use_container_width=True)
         else:
-            st.success("Inga gap hittades.")
+            st.success("✅ Inga gap hittades.")
 
-    with st.expander("Detaljerad Inspektion (Dagar Live & Returgrad)"):
+    with st.expander("🔍 Detaljerad Inspektion (Dagar Live & Returgrad)"):
         st.dataframe(df[['Article', name_col if name_col else 'Article', 'Gender_Clean', 'Days_Online', 'Tier', 'Total_Stock', 'ROAS_Actual', 'Target_ROAS', 'Estimated_Return_Rate']], use_container_width=True)
 
 else:
-    st.info("Ladda upp dina filer i sidomenyn för att starta analysen.")
+    st.info("👋 Ladda upp dina filer i sidomenyn för att starta analysen.")
