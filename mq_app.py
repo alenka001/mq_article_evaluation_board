@@ -265,30 +265,31 @@ if z_marketing and stock_file:
     def assign_strategic_tier(row):
         # Hink 1: Nyheter (Nyligen gått live)
         if row['Days_Online'] <= max_days_new:
-            return f"NEW ARRIVALS (Live ≤ {max_days_new} dagar)"
+            return f"🆕 NEW ARRIVALS (Live ≤ {max_days_new} dagar)"
             
         # Hink 2: Hög returgrad (Endast om aktiverat via checkbox)
         if use_high_return_tier and row['Estimated_Return_Rate'] >= 0.50:
-            return f"HÖG RETUR (Target ROAS: {high_return_target})"
+            return f"🚨 HÖG RETUR (Target ROAS: {high_return_target})"
             
         # Hink 3: Låg Retur (Standard Strategy)
         if row['Total_Stock'] >= t_stock and row['ROAS_Actual'] >= t_roas_base:
-            return f"LÅG RETUR (Standard Strategy - Target ROAS: {t_roas_base})"
+            return f"🔥 LÅG RETUR (Standard Strategy - Target ROAS: {t_roas_base})"
             
         # Hink 4: Low Performance / Paused Strategy (ENBART för produkter med minst 1 i lager)
         if row['Total_Stock'] >= 1:
-            return "LOW PERFORMANCE / PAUSED STRATEGY"
+            return "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
             
         return "EXCLUDE"
         
     df['Tier'] = df.apply(assign_strategic_tier, axis=1)
     df = df[df['Tier'] != "EXCLUDE"].copy()
 
-    # SÄKER VEKTORISERAD SET_TARGET_ROAS (FÖRHINDRAR VALUEERROR)
+    # SÄKER OCH TYPKONVERTERAD np.select FÖR TARGET_ROAS
+    tier_series = df['Tier'].astype(str)
     conditions = [
-        df['Tier'].str.contains("NEW ARRIVALS", na=False),
-        df['Tier'].str.contains("HÖG RETUR", na=False),
-        df['Tier'].str.contains("LOW PERFORMANCE", na=False)
+        tier_series.str.contains("NEW ARRIVALS", na=False),
+        tier_series.str.contains("HÖG RETUR", na=False),
+        tier_series.str.contains("LOW PERFORMANCE", na=False)
     ]
     choices = [
         float(t_roas_base),
@@ -298,12 +299,12 @@ if z_marketing and stock_file:
     df['Target_ROAS'] = np.select(conditions, choices, default=float(t_roas_base))
 
     # --- 4. DASHBOARD OUTPUT ---
-    st.header(f"Vecka {int(latest_week)} - Strategisk Planering")
+    st.header(f"📊 MQ Vecka {int(latest_week)} - Strategisk Planering")
     
     if art_perf_file:
-        st.success("Article Performance-fil uppladdad! Dagar online har uppdaterats på variant-nivå.")
+        st.success("✅ Article Performance-fil uppladdad! Dagar online har uppdaterats på variant-nivå.")
     else:
-        st.info("Tips: Ladda upp Article Performance Report i sidomenyn för mest exakta 'Days online'-data.")
+        st.info("💡 Tips: Ladda upp Article Performance Report i sidomenyn för mest exakta 'Days online'-data.")
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Unika Aktiva SKUs (Lager ≥ 1)", len(df))
@@ -323,14 +324,15 @@ if z_marketing and stock_file:
     st.divider()
 
     # --- STRATEGISKA KAMPANJHINKAR ---
-    strategic_tiers = [f"NEW ARRIVALS (Live ≤ {max_days_new} dagar)"]
+    strategic_tiers = [f"🆕 NEW ARRIVALS (Live ≤ {max_days_new} dagar)"]
     if use_high_return_tier:
-        strategic_tiers.append(f" HÖG RETUR (Target ROAS: {high_return_target})")
+        strategic_tiers.append(f"🚨 HÖG RETUR (Target ROAS: {high_return_target})")
     strategic_tiers.extend([
-        f"LÅG RETUR (Standard Strategy - Target ROAS: {t_roas_base})",
-        "LOW PERFORMANCE / PAUSED STRATEGY"
+        f"🔥 LÅG RETUR (Standard Strategy - Target ROAS: {t_roas_base})",
+        "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
     ])
-    st.subheader("Strategiska Kampanjhinkar (Deduplicerade SKUs)")
+
+    st.subheader("📦 Strategiska Kampanjhinkar (Deduplicerade SKUs)")
     
     for tier in strategic_tiers:
         tier_df = df[df['Tier'] == tier].copy()
