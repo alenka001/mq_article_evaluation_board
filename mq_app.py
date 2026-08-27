@@ -78,7 +78,7 @@ with st.sidebar:
     st.header("📂 Data Upload")
     z_marketing = st.file_uploader("1. Weekly SKU Report", type="csv")
     stock_file = st.file_uploader("2. Inventory File", type="csv")
-    return_file = st.file_uploader("3. Sales Performance (Return Rate)", type="csv")
+    return_file = st.file_uploader("3. Sales Performance Article Type (Return Rate)", type="csv")
     art_perf_file = st.file_uploader("4. Article Performance Report (Days Online)", type="csv")
     
     st.divider()
