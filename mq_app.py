@@ -4,13 +4,13 @@ import re
 import numpy as np
 
 # --- Page Setup ---
-st.set_page_config(page_title="Marketing Expert", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="Marketing Expert", layout="wide")
 st.title("Expert: Final Campaign Sync & Performance")
-st.markdown("### Strategisk Kampanjsegmentering, Days Online & Returbaserad Mål-ROAS")
+st.markdown("### Strategisk Kampanjsegmentering & Days Online-analys")
 
 # --- 1. UTILITIES & OPTIMIZATION ---
 def optimize_memory(df):
-    """Reducerar RAM-användning för att förhindra Streamlit Cloud OOM (1 GB gräns)."""
+    """Reducerar RAM-användning för Streamlit Cloud (1 GB gräns)."""
     for col in df.columns:
         col_type = df[col].dtype
         if col_type != object:
@@ -44,10 +44,12 @@ def clean_numeric(series):
     return series.apply(handle_string).fillna(0)
 
 def standardize_sku(sku):
+    """Standardiserar SKU till Config/Variant-format (t.ex. ABC12D345-E67)."""
     s = str(sku).strip().upper().replace('.0', '')
     if '-' in s:
         parts = s.split('-')
-        if len(parts) >= 2: return f"{parts[0]}-{parts[1][:3]}"
+        if len(parts) >= 2: 
+            return f"{parts[0]}-{parts[1][:3]}"
     return s
 
 @st.cache_data(show_spinner=False)
@@ -67,34 +69,33 @@ def load_csv(file):
     df.columns = [str(c).strip() for c in df.columns]
     return optimize_memory(df)
 
-def find_col(df, preferred_name, fallback_idx):
+def find_col(df, preferred_names, fallback_idx=0):
+    if isinstance(preferred_names, str):
+        preferred_names = [preferred_names]
     cols = df.columns.tolist()
-    for c in cols:
-        if c.lower() == preferred_name.lower(): return c
+    for pref in preferred_names:
+        for c in cols:
+            if c.lower() == pref.lower() or pref.lower() in c.lower(): 
+                return c
     return cols[fallback_idx] if fallback_idx < len(cols) else cols[0]
 
 # --- 2. SIDEBAR ---
 with st.sidebar:
     st.header("📂 Data Upload")
-    z_marketing = st.file_uploader("1. Weekly SKU Report", type="csv")
+    z_marketing = st.file_uploader("1. MQ Weekly SKU Report", type="csv")
     stock_file = st.file_uploader("2. Inventory File", type="csv")
-    return_file = st.file_uploader("3. Sales Performance Article Type (Return Rate)", type="csv")
-    art_perf_file = st.file_uploader("4. Article Performance Report (Days Online)", type="csv")
+    return_file = st.file_uploader("3.Article type Sales Performance (Return Rate)", type="csv")
+    art_perf_file = st.file_uploader("4. Article level Performance Report (Days Online)", type="csv")
     
     st.divider()
     st.header("🆕 Nyhets-inställningar")
     max_days_new = st.number_input("Max dagar live för Nyheter (Hink 1)", min_value=1, max_value=60, value=7, help="Produkter som varit online i maximalt detta antal dagar sorteras till Nyhetshinken")
     
     st.divider()
-    st.header("🎯 Returbaserad Strategi")
-    use_high_return_tier = st.checkbox("Aktivera Högretur-hink", value=True, help="Bocka ur för att avaktivera separat hantering av högretur-produkter.")
-    high_return_target = st.number_input("Target ROAS: Högretur-produkter", min_value=1.0, value=13.0, help="Produkter med returgrad >= 50% skyddas med detta höga mål när högretur är aktiverat", disabled=not use_high_return_tier)
-    
-    st.divider()
-    st.header("💰 Budget & Tiers (Standard-mål)")
+    st.header("Budget & Tiers (Standard-mål)")
     total_monthly_budget = st.number_input("Total Budget (SEK)", min_value=0, value=100000)
-    t_stock = st.number_input("Min Stock (Lågretur Standard)", value=5)
-    t_roas_base = st.number_input("Target ROAS (Lågretur Standard)", value=3.0)
+    t_stock = st.number_input("Min Stock (Standard Strategy)", value=5)
+    t_roas_base = st.number_input("Target ROAS (Standard Strategy)", value=3.0)
     
     st.divider()
     days_threshold = st.slider("Stock Alert (Days):", 1, 14, 5)
@@ -105,12 +106,12 @@ if z_marketing and stock_file:
     df_s_raw = load_csv(stock_file)
 
     # 1. Identifiera kolumner i Marknadsföringsfilen (SKU Report)
-    cat_col = find_col(df_m_raw, 'Category', 3)
-    year_col = find_col(df_m_raw, 'Year', 0)
-    week_col = find_col(df_m_raw, 'Week', 2)
-    sku_col = find_col(df_m_raw, 'Config SKU', 6)
-    gender_col = find_col(df_m_raw, 'Gender', 4)  # Kolumn E
-    camp_col = find_col(df_m_raw, 'ZMS Campaign', 5)
+    cat_col = find_col(df_m_raw, ['Category', 'Article type'], 3)
+    year_col = find_col(df_m_raw, ['Year'], 0)
+    week_col = find_col(df_m_raw, ['Week'], 2)
+    sku_col = find_col(df_m_raw, ['Config SKU', 'SKU', 'Article Variant SKU', 'Partner SKU'], 6)
+    gender_col = find_col(df_m_raw, ['Gender'], 4)
+    camp_col = find_col(df_m_raw, ['ZMS Campaign', 'Campaign'], 5)
 
     # Clean mätvärden
     m_cols_map = {
@@ -119,36 +120,44 @@ if z_marketing and stock_file:
         'PDP_Views_Val': 'PDP views', 'Cart_Val': 'Add to cart'
     }
     for k, v in m_cols_map.items():
-        if v in df_m_raw.columns: df_m_raw[k] = clean_numeric(df_m_raw[v])
-        else: df_m_raw[k] = 0.0
+        found = find_col(df_m_raw, [v], -1)
+        if found in df_m_raw.columns: 
+            df_m_raw[k] = clean_numeric(df_m_raw[found])
+        else: 
+            df_m_raw[k] = 0.0
 
-    # DYNAMISK FILTRERING I SIDEBAR: Kategori & Kön (Gender)
+    # Dynamic Filter: Kategori & Gender
     cats_raw = df_m_raw[cat_col].dropna().unique().astype(str).tolist()
     all_categories = sorted([c for c in cats_raw if c.strip() and c.lower() != 'nan'])
     selected_cats = st.sidebar.multiselect("Filter by Category", options=all_categories, default=all_categories)
     
     genders_raw = df_m_raw[gender_col].dropna().unique().astype(str).tolist()
     all_genders = sorted([g for g in genders_raw if g.strip() and g.lower() != 'nan'])
-    selected_genders = st.sidebar.multiselect("Filter by Gender (Kolumn E)", options=all_genders, default=all_genders)
+    selected_genders = st.sidebar.multiselect("Filter by Gender", options=all_genders, default=all_genders)
 
-    # Applicera filter på marknadsdata
+    # Applicera filter
     df_m_filtered = df_m_raw[
         (df_m_raw[cat_col].isin(selected_cats)) & 
         (df_m_raw[gender_col].isin(selected_genders))
     ].copy()
 
+    # Veckofiltrering med fallback
     df_m_filtered['_year_num'] = clean_numeric(df_m_filtered[year_col])
     df_m_filtered['_week_num'] = clean_numeric(df_m_filtered[week_col])
     latest_year = df_m_filtered['_year_num'].max()
     latest_week = df_m_filtered[df_m_filtered['_year_num'] == latest_year]['_week_num'].max()
+    
     df_m_latest = df_m_filtered[(df_m_filtered['_year_num'] == latest_year) & (df_m_filtered['_week_num'] == latest_week)].copy()
+    if df_m_latest.empty:
+        df_m_latest = df_m_filtered.copy()
+        latest_week = 0
 
-    # 2. Läs in returdata
+    # 2. Läs in Returdata (För information i inspektionstabellen)
     return_map = {}
     if return_file:
         df_r = load_csv(return_file)
-        r_type_col = find_col(df_r, 'Article type', 0)
-        r_rate_col = next((c for c in df_r.columns if 'return rate' in c.lower()), df_r.columns[min(12, len(df_r.columns)-1)])
+        r_type_col = find_col(df_r, ['Article type', 'Category'], 0)
+        r_rate_col = find_col(df_r, ['Estimated return rate', 'Return rate'], 1)
 
         def parse_percent(x):
             s = str(x).replace('%', '').strip()
@@ -179,36 +188,41 @@ if z_marketing and stock_file:
     days_online_map = {}
     if art_perf_file:
         df_ap = load_csv(art_perf_file)
-        ap_sku_col = next((c for c in df_ap.columns if 'variant' in c.lower() or 'sku' in c.lower() or 'article' in c.lower()), df_ap.columns[0])
-        ap_days_col = next((c for c in df_ap.columns if 'days online' in c.lower() or 'days live' in c.lower() or 'days' in c.lower()), None)
+        ap_sku_col = find_col(df_ap, ['Article variant', 'Variant SKU', 'Config SKU', 'SKU'], 0)
+        ap_days_col = find_col(df_ap, ['Days online', 'Days live', 'Days'], 1)
         
-        if ap_days_col:
+        if ap_days_col in df_ap.columns:
             df_ap['Std_SKU'] = df_ap[ap_sku_col].apply(standardize_sku)
             df_ap['Days_Val'] = clean_numeric(df_ap[ap_days_col])
             days_online_map = df_ap.groupby('Std_SKU')['Days_Val'].min().to_dict()
 
-    # 4. Bearbeta lagerdata
+    # 4. Bearbeta Lagerdata
     df_s_raw.columns = [c.strip().lower() for c in df_s_raw.columns]
-    inv_sku_col = next((c for c in df_s_raw.columns if 'zalando_article_variant' in c or 'partner_article_variant' in c or 'sku' in c), df_s_raw.columns[0])
-    name_col = next((c for c in df_s_raw.columns if 'article_name' in c or 'name' in c), None)
-    days_live_inv_col = next((c for c in df_s_raw.columns if 'days online' in c or 'days live' in c or 'days_online' in c), None)
-    season_col = next((c for c in df_s_raw.columns if 'season' in c), None)
+    inv_sku_col = find_col(df_s_raw, ['zalando_article_variant', 'partner_article_variant', 'sku', 'config_sku'], 0)
+    name_col = find_col(df_s_raw, ['article_name', 'name'], 1)
+    days_live_inv_col = find_col(df_s_raw, ['days online', 'days live', 'days_online'], -1)
+    season_col = find_col(df_s_raw, ['season'], -1)
 
     df_s_raw['Article_Match'] = df_s_raw[inv_sku_col].apply(standardize_sku)
-    df_s_raw['Days_Online_Val'] = clean_numeric(df_s_raw[days_live_inv_col]) if days_live_inv_col else 999.0
+    df_s_raw['Days_Online_Val'] = clean_numeric(df_s_raw[days_live_inv_col]) if days_live_inv_col in df_s_raw.columns else 999.0
     
-    # Säsonsfilter från Lagerfilen (Kolumn I)
-    if season_col:
+    # Säsongsfilter från Lagerfilen (Kolumn I)
+    if season_col in df_s_raw.columns:
         seasons_raw = df_s_raw[season_col].dropna().unique().astype(str).tolist()
         all_seasons = sorted([s for s in seasons_raw if s.strip() and s.lower() != 'nan'])
-        selected_seasons = st.sidebar.multiselect("Filter by Season (Lagerfil Kolumn I)", options=all_seasons, default=all_seasons)
+        selected_seasons = st.sidebar.multiselect("Filter by Season", options=all_seasons, default=all_seasons)
         df_s_raw = df_s_raw[df_s_raw[season_col].astype(str).isin(selected_seasons)].copy()
 
     stock_cols = [c for c in df_s_raw.columns if 'stock' in c]
-    for c in stock_cols: df_s_raw[c] = clean_numeric(df_s_raw[c])
+    if not stock_cols:
+        df_s_raw['stock'] = 1
+        stock_cols = ['stock']
+        
+    for c in stock_cols: 
+        df_s_raw[c] = clean_numeric(df_s_raw[c])
     
     df_s_pivot = df_s_raw.groupby('Article_Match').agg({
-        name_col if name_col else 'Article_Match': 'first',
+        name_col if name_col in df_s_raw.columns else 'Article_Match': 'first',
         'Days_Online_Val': 'min',
         **{c: 'sum' for c in stock_cols}
     }).reset_index()
@@ -238,9 +252,10 @@ if z_marketing and stock_file:
         cat_col: 'first'
     }).reset_index()
     
-    df = pd.merge(df_m_agg, df_s_pivot, left_on='Article', right_on='Article_Match', how='left').fillna(0)
-    
-    # Hämta Dagar Online med prioritering (Article Performance -> Lagerfil -> 999)
+    df = pd.merge(df_m_agg, df_s_pivot, left_on='Article', right_on='Article_Match', how='left')
+    df['Total_Stock'] = df['Total_Stock'].fillna(1)
+    df.fillna(0, inplace=True)
+
     def resolve_days_online(row):
         sku = row['Article']
         if sku in days_online_map:
@@ -253,7 +268,6 @@ if z_marketing and stock_file:
     df['ROAS_Actual'] = df['GMV_Val'] / df['Spend_Val'].replace(0, 1)
     df['Estimated_Return_Rate'] = df[cat_col].apply(get_return_rate_by_category)
     
-    # ENBART ARTIKLAR MED MINST 1 I LAGER MÖJLIGGÖRS
     df = df[df['Total_Stock'] >= 1].copy()
     df['Daily_Velocity'] = df['Sold_Val'] / 7
     df['Days_Left'] = df['Total_Stock'] / df['Daily_Velocity'].replace(0, 0.001)
@@ -261,54 +275,50 @@ if z_marketing and stock_file:
     # GARANTERAD DEDUPLICERING (1 rad per SKU)
     df = df.drop_duplicates(subset=['Article']).copy()
 
-    # --- STRATEGISK LOGIK (EXKLUSIVA HINKAR) ---
+    # --- STRATEGISK LOGIK (FÖRENKLADE EXKLUSIVA HINKAR) ---
     def assign_strategic_tier(row):
         # Hink 1: Nyheter (Nyligen gått live)
         if row['Days_Online'] <= max_days_new:
-            return f"🆕 NEW ARRIVALS (Live ≤ {max_days_new} dagar)"
+            return f"NEW ARRIVALS (Live ≤ {max_days_new} dagar)"
             
-        # Hink 2: Hög returgrad (Endast om aktiverat via checkbox)
-        if use_high_return_tier and row['Estimated_Return_Rate'] >= 0.50:
-            return f"🚨 HÖG RETUR (Target ROAS: {high_return_target})"
-            
-        # Hink 3: Låg Retur (Standard Strategy)
+        # Hink 2: Standard Strategy
         if row['Total_Stock'] >= t_stock and row['ROAS_Actual'] >= t_roas_base:
-            return f"🔥 LÅG RETUR (Standard Strategy - Target ROAS: {t_roas_base})"
+            return f"STANDARD STRATEGY (Target ROAS: {t_roas_base})"
             
-        # Hink 4: Low Performance / Paused Strategy (ENBART för produkter med minst 1 i lager)
+        # Hink 3: Low Performance / Paused Strategy
         if row['Total_Stock'] >= 1:
-            return "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
+            return "LOW PERFORMANCE / PAUSED STRATEGY"
             
         return "EXCLUDE"
         
     df['Tier'] = df.apply(assign_strategic_tier, axis=1)
     df = df[df['Tier'] != "EXCLUDE"].copy()
 
-    # SÄKER OCH TYPKONVERTERAD np.select FÖR TARGET_ROAS
+    # Säker np.select för Target_ROAS
     tier_series = df['Tier'].astype(str)
     conditions = [
         tier_series.str.contains("NEW ARRIVALS", na=False),
-        tier_series.str.contains("HÖG RETUR", na=False),
         tier_series.str.contains("LOW PERFORMANCE", na=False)
     ]
     choices = [
         float(t_roas_base),
-        float(high_return_target),
         0.0
     ]
     df['Target_ROAS'] = np.select(conditions, choices, default=float(t_roas_base))
 
     # --- 4. DASHBOARD OUTPUT ---
-    st.header(f"📊 MQ Vecka {int(latest_week)} - Strategisk Planering")
+    st.header(f"Vecka {int(latest_week) if latest_week > 0 else 'Alla Veckor'} - Strategisk Planering")
     
     if art_perf_file:
-        st.success("✅ Article Performance-fil uppladdad! Dagar online har uppdaterats på variant-nivå.")
+        st.success("Article Performance-fil uppladdad! Dagar online har uppdaterats på variant-nivå.")
     else:
-        st.info("💡 Tips: Ladda upp Article Performance Report i sidomenyn för mest exakta 'Days online'-data.")
+        st.info("Tips: Ladda upp Article Performance Report i sidomenyn för mest exakta 'Days online'-data.")
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Unika Aktiva SKUs (Lager ≥ 1)", len(df))
-    m2.metric("ROAS (W)", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
+    total_gmv = df['GMV_Val'].sum()
+    total_spend = df['Spend_Val'].sum()
+    m2.metric("ROAS (W)", f"{(total_gmv/total_spend):.2f}" if total_spend > 0 else "0.00")
     m3.metric("Månadsbudget", f"{total_monthly_budget:,.0f} kr")
     
     zfs_col_name = next((c for c in df_s_pivot.columns if 'zfs' in c), 'Total_Stock')
@@ -316,7 +326,7 @@ if z_marketing and stock_file:
     df_gap = df_s_pivot[(df_s_pivot[zfs_col_name] > 10) & (~df_s_pivot['Article_Match'].isin(all_marketing_skus))]
     m4.metric("Gap (ZFS Stock > 10)", len(df_gap))
 
-    st.subheader("🎯 Rekommenderad Budget per Kampanj")
+    st.subheader("Rekommenderad Budget per Kampanj")
     st.dataframe(campaign_performance[[camp_col, 'GMV_Val', 'ROAS_Campaign', 'Recommended_Budget']].style.format({
         'GMV_Val': '{:,.0f} kr', 'ROAS_Campaign': '{:.2f}', 'Recommended_Budget': '{:,.0f} kr'
     }), use_container_width=True)
@@ -324,15 +334,13 @@ if z_marketing and stock_file:
     st.divider()
 
     # --- STRATEGISKA KAMPANJHINKAR ---
-    strategic_tiers = [f"🆕 NEW ARRIVALS (Live ≤ {max_days_new} dagar)"]
-    if use_high_return_tier:
-        strategic_tiers.append(f"🚨 HÖG RETUR (Target ROAS: {high_return_target})")
-    strategic_tiers.extend([
-        f"🔥 LÅG RETUR (Standard Strategy - Target ROAS: {t_roas_base})",
-        "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
-    ])
+    strategic_tiers = [
+        f"NEW ARRIVALS (Live ≤ {max_days_new} dagar)",
+        f"STANDARD STRATEGY (Target ROAS: {t_roas_base})",
+        "LOW PERFORMANCE / PAUSED STRATEGY"
+    ]
 
-    st.subheader("📦 Strategiska Kampanjhinkar (Deduplicerade SKUs)")
+    st.subheader("Strategiska Kampanjhinkar (Deduplicerade SKUs)")
     
     for tier in strategic_tiers:
         tier_df = df[df['Tier'] == tier].copy()
@@ -344,7 +352,7 @@ if z_marketing and stock_file:
         
         if skus:
             st.download_button(
-                label=f"📥 Ladda ner CSV för {tier}",
+                label=f"Ladda ner CSV för {tier}",
                 data=pd.DataFrame(skus, columns=['SKU']).to_csv(index=False, header=False),
                 file_name=f"MQ_Campaign_{tier.split(' ')[0]}.csv",
                 mime="text/csv",
@@ -353,18 +361,18 @@ if z_marketing and stock_file:
         st.divider()
 
     # --- SYSTEMBEVAKNING & DETALJER ---
-    with st.expander("🔍 THE GAP FINDER (ZFS Lager > 10 utan Kampanj)"):
+    with st.expander("THE GAP FINDER (ZFS Lager > 10 utan Kampanj)"):
         if not df_gap.empty:
             st.warning(f"Hittade {len(df_gap)} artiklar med ett starkt ZFS-lagersaldo (>10) som helt saknar marknadsföring.")
-            col_display_name = name_col if name_col else 'Article_Match'
+            col_display_name = name_col if name_col in df_gap.columns else 'Article_Match'
             df_gap_final = df_gap[['Article_Match', col_display_name, zfs_col_name, 'Total_Stock']].sort_values(zfs_col_name, ascending=False)
             df_gap_final.columns = ['SKU', 'Produktnamn', 'ZFS Lagersaldo', 'Total-Lager']
             st.dataframe(df_gap_final, use_container_width=True)
         else:
-            st.success("✅ Inga gap hittades.")
+            st.success("Inga gap hittades.")
 
-    with st.expander("🔍 Detaljerad Inspektion (Dagar Live & Returgrad)"):
-        st.dataframe(df[['Article', name_col if name_col else 'Article', 'Gender_Clean', 'Days_Online', 'Tier', 'Total_Stock', 'ROAS_Actual', 'Target_ROAS', 'Estimated_Return_Rate']], use_container_width=True)
+    with st.expander("Detaljerad Inspektion (Dagar Live & Returgrad)"):
+        st.dataframe(df[['Article', name_col if name_col in df.columns else 'Article', 'Gender_Clean', 'Days_Online', 'Tier', 'Total_Stock', 'ROAS_Actual', 'Target_ROAS', 'Estimated_Return_Rate']], use_container_width=True)
 
 else:
-    st.info("👋 Ladda upp dina filer i sidomenyn för att starta analysen.")
+    st.info("Ladda upp dina filer i sidomenyn för att starta analysen.")
