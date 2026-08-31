@@ -82,10 +82,10 @@ def find_col(df, preferred_names, fallback_idx=0):
 # --- 2. SIDEBAR ---
 with st.sidebar:
     st.header("📂 Data Upload")
-    z_marketing = st.file_uploader("1. MQ Weekly SKU Report", type="csv")
+    z_marketing = st.file_uploader("1. Weekly SKU Report", type="csv")
     stock_file = st.file_uploader("2. Inventory File", type="csv")
     return_file = st.file_uploader("3. Article type Sales Performance (Return Rate)", type="csv")
-    art_perf_file = st.file_uploader("4. Article level  Performance Report (Days Online)", type="csv")
+    art_perf_file = st.file_uploader("4. Article level Performance Report (Days Online)", type="csv")
     
     st.divider()
     st.header("🆕 Nyhets-inställningar")
@@ -254,13 +254,13 @@ if z_marketing and stock_file:
     
     df = pd.merge(df_m_agg, df_s_pivot, left_on='Article', right_on='Article_Match', how='left')
     
-    # SÄKER SÄRSKILD FYLLNING AV TOMMA VÄRDEN (UNDVIKER TYPEERROR VID MERGE)
+    # Typsäker fyllning av NaN (Förhindrar TypeError)
     num_cols = df.select_dtypes(include=[np.number]).columns
     df[num_cols] = df[num_cols].fillna(0.0)
     str_cols = df.select_dtypes(include=['object', 'string']).columns
     df[str_cols] = df[str_cols].fillna("")
 
-    df['Total_Stock'] = df['Total_Stock'].replace(0, 1.0)  # Fallback så att inte alla varor filtreras bort
+    df['Total_Stock'] = df['Total_Stock'].replace(0, 1.0)
 
     def resolve_days_online(row):
         sku = row['Article']
@@ -313,7 +313,7 @@ if z_marketing and stock_file:
     df['Target_ROAS'] = np.select(conditions, choices, default=float(t_roas_base))
 
     # --- 4. DASHBOARD OUTPUT ---
-    st.header(f"📊 MQ Vecka {int(latest_week) if latest_week > 0 else 'Alla Veckor'} - Strategisk Planering")
+    st.header(f"📊 Vecka {int(latest_week) if latest_week > 0 else 'Alla Veckor'} - Strategisk Planering")
     
     if art_perf_file:
         st.success("✅ Article Performance-fil uppladdad! Dagar online har uppdaterats på variant-nivå.")
@@ -339,7 +339,7 @@ if z_marketing and stock_file:
 
     st.divider()
 
-    # --- STRATEGISKA KAMPANJHINKAR ---
+    # --- STRATEGISKA KAMPANJHINKAR (INKLUDERAR NEW ARRIVALS EXPORT) ---
     strategic_tiers = [
         f"🆕 NEW ARRIVALS (Live ≤ {max_days_new} dagar)",
         f"🔥 STANDARD STRATEGY (Target ROAS: {t_roas_base})",
@@ -357,10 +357,12 @@ if z_marketing and stock_file:
         st.text_area("SKUs (Kommaseparerad)", ",".join(skus), height=120, key=f"t_all_{tier}")
         
         if skus:
+            # Rensa filnamnet så att det blir utan specialtecken och emojis vid export
+            clean_file_label = re.sub(r'[^\w\s-]', '', tier).strip().replace(' ', '_')
             st.download_button(
-                label=f"📥 Ladda ner CSV för {tier}",
+                label=f"📥 Ladda ner CSV för {tier.split('(')[0].strip()}",
                 data=pd.DataFrame(skus, columns=['SKU']).to_csv(index=False, header=False),
-                file_name=f"MQ_Campaign_{tier.split(' ')[0]}.csv",
+                file_name=f"MQ_Campaign_{clean_file_label}.csv",
                 mime="text/csv",
                 key=f"dl_{tier}"
             )
