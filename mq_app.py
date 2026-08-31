@@ -4,7 +4,7 @@ import re
 import numpy as np
 
 # --- Page Setup ---
-st.set_page_config(page_title="Marketing Expert", layout="wide", page_icon="🚀")
+st.set_page_config(page_title=" Marketing Expert", layout="wide", page_icon="🚀")
 st.title("Expert: Final Campaign Sync & Performance")
 st.markdown("### Strategisk Kampanjsegmentering & Days Online-analys")
 
@@ -84,7 +84,7 @@ with st.sidebar:
     st.header("📂 Data Upload")
     z_marketing = st.file_uploader("1. Weekly SKU Report", type="csv")
     stock_file = st.file_uploader("2. Inventory File", type="csv")
-    return_file = st.file_uploader("3. Article type Sales Performance (Return Rate)", type="csv")
+    return_file = st.file_uploader("3. Sales type Performance (Return Rate)", type="csv")
     art_perf_file = st.file_uploader("4. Article level Performance Report (Days Online)", type="csv")
     
     st.divider()
@@ -206,7 +206,7 @@ if z_marketing and stock_file:
     df_s_raw['Article_Match'] = df_s_raw[inv_sku_col].apply(standardize_sku)
     df_s_raw['Days_Online_Val'] = clean_numeric(df_s_raw[days_live_inv_col]) if days_live_inv_col in df_s_raw.columns else 999.0
     
-    # Säsonsfilter från Lagerfilen (Kolumn I)
+    # Säasonsfilter från Lagerfilen
     if season_col in df_s_raw.columns:
         seasons_raw = df_s_raw[season_col].dropna().unique().astype(str).tolist()
         all_seasons = sorted([s for s in seasons_raw if s.strip() and s.lower() != 'nan'])
@@ -254,7 +254,7 @@ if z_marketing and stock_file:
     
     df = pd.merge(df_m_agg, df_s_pivot, left_on='Article', right_on='Article_Match', how='left')
     
-    # Typsäker fyllning av NaN (Förhindrar TypeError)
+    # Typsäker fyllning av NaN
     num_cols = df.select_dtypes(include=[np.number]).columns
     df[num_cols] = df[num_cols].fillna(0.0)
     str_cols = df.select_dtypes(include=['object', 'string']).columns
@@ -339,34 +339,65 @@ if z_marketing and stock_file:
 
     st.divider()
 
-    # --- STRATEGISKA KAMPANJHINKAR (INKLUDERAR NEW ARRIVALS EXPORT) ---
+    # --- STRATEGISKA KAMPANJHINKAR & ÖVERSIKT ---
     strategic_tiers = [
         f"🆕 NEW ARRIVALS (Live ≤ {max_days_new} dagar)",
         f"🔥 STANDARD STRATEGY (Target ROAS: {t_roas_base})",
         "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
     ]
 
-    st.subheader("📦 Strategiska Kampanjhinkar (Deduplicerade SKUs)")
+    # Skapa översiktsdata för alla hinkar
+    summary_data = []
+    total_skus_count = len(df)
     
     for tier in strategic_tiers:
+        tier_df = df[df['Tier'] == tier]
+        count = len(tier_df)
+        pct = (count / total_skus_count * 100) if total_skus_count > 0 else 0.0
+        summary_data.append({
+            "Kampanjhink": tier,
+            "Antal SKUs": count,
+            "Andel (%)": f"{pct:.1f}%"
+        })
+
+    summary_df = pd.DataFrame(summary_data)
+
+    # Visa Översiktstabell & Export-knapp
+    st.subheader("📋 Översikt över Kampanjhinkar")
+    st.dataframe(summary_df, use_container_width=True)
+
+    st.download_button(
+        label="📥 Ladda ner Hinköversikt (CSV)",
+        data=summary_df.to_csv(index=False, encoding='utf-8'),
+        file_name="Kampanjhinkar_Oversikt.csv",
+        mime="text/csv",
+        key="dl_summary_overview"
+    )
+
+    st.divider()
+    st.subheader("📦 Strategiska Kampanjhinkar (Deduplicerade SKUs)")
+
+    # Rendera enbart hinkar som har minst 1 SKU
+    for tier in strategic_tiers:
         tier_df = df[df['Tier'] == tier].copy()
-        st.markdown(f"### {tier}")
-        st.metric("Antal Unika SKUs", len(tier_df))
-        
         skus = tier_df['Article'].unique().tolist()
-        st.text_area("SKUs (Kommaseparerad)", ",".join(skus), height=120, key=f"t_all_{tier}")
         
-        if skus:
-            # Rensa filnamnet så att det blir utan specialtecken och emojis vid export
+        # Regel: Visa inte hinken om den saknar produkter!
+        if len(skus) > 0:
+            st.markdown(f"### {tier}")
+            st.metric("Antal Unika SKUs", len(skus))
+            
+            st.text_area("SKUs (Kommaseparerad)", ",".join(skus), height=120, key=f"t_all_{tier}")
+            
             clean_file_label = re.sub(r'[^\w\s-]', '', tier).strip().replace(' ', '_')
             st.download_button(
                 label=f"📥 Ladda ner CSV för {tier.split('(')[0].strip()}",
                 data=pd.DataFrame(skus, columns=['SKU']).to_csv(index=False, header=False),
-                file_name=f"MQ_Campaign_{clean_file_label}.csv",
+                file_name=f"Campaign_{clean_file_label}.csv",
                 mime="text/csv",
                 key=f"dl_{tier}"
             )
-        st.divider()
+            st.divider()
 
     # --- SYSTEMBEVAKNING & DETALJER ---
     with st.expander("🔍 THE GAP FINDER (ZFS Lager > 10 utan Kampanj)"):
