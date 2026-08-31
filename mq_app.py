@@ -4,9 +4,9 @@ import re
 import numpy as np
 
 # --- Page Setup ---
-st.set_page_config(page_title=" Marketing Expert", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="Marketing Expert", layout="wide", page_icon="🚀")
 st.title("Expert: Final Campaign Sync & Performance")
-st.markdown("### Strategisk Kampanjsegmentering & Days Online-analys")
+st.markdown("### Strategisk Kampanjsegmentering & Nyhets-analys")
 
 # --- 1. UTILITIES & OPTIMIZATION ---
 def optimize_memory(df):
@@ -184,7 +184,7 @@ if z_marketing and stock_file:
             if k in c or c in k: return v
         return 0.45
 
-    # 3. Läs in Article Performance för Days Online
+    # 3. Läs in Article Performance för Days Online (Kritiskt för New Arrivals)
     days_online_map = {}
     if art_perf_file:
         df_ap = load_csv(art_perf_file)
@@ -262,6 +262,7 @@ if z_marketing and stock_file:
 
     df['Total_Stock'] = df['Total_Stock'].replace(0, 1.0)
 
+    # Bestäm Dagar Live per SKU med prioritering
     def resolve_days_online(row):
         sku = row['Article']
         if sku in days_online_map:
@@ -282,18 +283,22 @@ if z_marketing and stock_file:
     df = df.drop_duplicates(subset=['Article']).copy()
 
     # --- STRATEGISK LOGIK (EXKLUSIVA HINKAR) ---
+    tier_new_arrivals = f"🆕 NEW ARRIVALS (Live ≤ {max_days_new} dagar)"
+    tier_standard = f"🔥 STANDARD STRATEGY (Target ROAS: {t_roas_base})"
+    tier_low_perf = "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
+
     def assign_strategic_tier(row):
-        # Hink 1: Nyheter
+        # Prioritet 1: Nyheter (Baserat på slider i sidomenyn)
         if row['Days_Online'] <= max_days_new:
-            return f"🆕 NEW ARRIVALS (Live ≤ {max_days_new} dagar)"
+            return tier_new_arrivals
             
-        # Hink 2: Standard Strategy
+        # Prioritet 2: Standard Strategy
         if row['Total_Stock'] >= t_stock and row['ROAS_Actual'] >= t_roas_base:
-            return f"🔥 STANDARD STRATEGY (Target ROAS: {t_roas_base})"
+            return tier_standard
             
-        # Hink 3: Low Performance / Paused Strategy
+        # Prioritet 3: Low Performance
         if row['Total_Stock'] >= 1:
-            return "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
+            return tier_low_perf
             
         return "EXCLUDE"
         
@@ -313,7 +318,7 @@ if z_marketing and stock_file:
     df['Target_ROAS'] = np.select(conditions, choices, default=float(t_roas_base))
 
     # --- 4. DASHBOARD OUTPUT ---
-    st.header(f"📊 Vecka {int(latest_week) if latest_week > 0 else 'Alla Veckor'} - Strategisk Planering")
+    st.header(f"Vecka {int(latest_week) if latest_week > 0 else 'Alla Veckor'} - Strategisk Planering")
     
     if art_perf_file:
         st.success("✅ Article Performance-fil uppladdad! Dagar online har uppdaterats på variant-nivå.")
@@ -340,11 +345,7 @@ if z_marketing and stock_file:
     st.divider()
 
     # --- STRATEGISKA KAMPANJHINKAR & ÖVERSIKT ---
-    strategic_tiers = [
-        f"🆕 NEW ARRIVALS (Live ≤ {max_days_new} dagar)",
-        f"🔥 STANDARD STRATEGY (Target ROAS: {t_roas_base})",
-        "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
-    ]
+    strategic_tiers = [tier_new_arrivals, tier_standard, tier_low_perf]
 
     # Skapa översiktsdata för alla hinkar
     summary_data = []
@@ -382,7 +383,7 @@ if z_marketing and stock_file:
         tier_df = df[df['Tier'] == tier].copy()
         skus = tier_df['Article'].unique().tolist()
         
-        # Regel: Visa inte hinken om den saknar produkter!
+        # Visa endast om hinken har minst 1 SKU!
         if len(skus) > 0:
             st.markdown(f"### {tier}")
             st.metric("Antal Unika SKUs", len(skus))
