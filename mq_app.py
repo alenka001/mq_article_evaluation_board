@@ -89,7 +89,7 @@ with st.sidebar:
     
     st.divider()
     st.header("🆕 Nyhets-inställningar")
-    max_days_new = st.number_input("Max dagar live för Nyheter (Hink 1)", min_value=1, max_value=60, value=7, help="Produkter som varit online i maximalt detta antal dagar sorteras till Nyhetshinken")
+    max_days_new = st.number_input("Max dagar live för Nyheter (Hink 1)", min_value=1, max_value=60, value=20, help="Produkter som varit online i maximalt detta antal dagar sorteras till Nyhetshinken")
     
     st.divider()
     st.header("💰 Budget & Tiers (Standard-mål)")
