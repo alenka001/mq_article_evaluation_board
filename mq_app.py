@@ -93,9 +93,9 @@ with st.sidebar:
     
     st.divider()
     st.header("💰 Budget & Tiers (Standard-mål)")
-    total_monthly_budget = st.number_input("Total Budget (SEK)", min_value=0, value=100000)
-    t_stock = st.number_input("Min Stock (Standard Strategy)", value=5)
-    t_roas_base = st.number_input("Target ROAS (Standard Strategy)", value=3.0)
+    total_monthly_budget = st.number_input("Total Budget (SEK)", min_value=0, value=300000)
+    t_stock = st.number_input("Min Stock (Standard Strategy)", value=10)
+    t_roas_base = st.number_input("Target ROAS (Standard Strategy)", value=8.0)
     
     st.divider()
     days_threshold = st.slider("Stock Alert (Days):", 1, 14, 5)
