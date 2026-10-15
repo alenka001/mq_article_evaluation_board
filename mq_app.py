@@ -90,12 +90,12 @@ with st.sidebar:
     
     st.divider()
     st.header("🆕 Nyhets-inställningar")
-    max_weeks_new = st.number_input("Max veckor live för Nyheter (Hink 1)", min_value=1, max_value=52, value=1, help="Produkter som lades ut till försäljning för första gången inom valda antal veckor sorteras till Nyhetshinken")
+    max_weeks_new = st.number_input("Max veckor live för Nyheter", min_value=1, max_value=52, value=1, help="Produkter som lades ut till försäljning för första gången inom valda antal veckor sorteras till Nyhetshinkarna.")
     
     st.divider()
-    st.header("🚺 Damen (Female Strategy)")
-    t_stock_female = st.number_input("Min Stock (Damen)", min_value=1, value=10)
-    t_roas_female = st.number_input("Target ROAS (Damen)", min_value=0.0, value=8.0, step=0.5)
+    st.header("🚺 Damen (Female & Unisex Strategy)")
+    t_stock_female = st.number_input("Min Stock (Damen/Unisex)", min_value=1, value=10)
+    t_roas_female = st.number_input("Target ROAS (Damen/Unisex)", min_value=0.0, value=8.0, step=0.5)
 
     st.divider()
     st.header("🚹 Herren (Male Strategy)")
@@ -285,48 +285,59 @@ if z_marketing and stock_file:
     df = df.drop_duplicates(subset=['Article']).copy()
 
     # --- STRATEGISK LOGIK (EXKLUSIVA HINKAR) ---
-    tier_nyheter = f"🆕 NYHETER (Live ≤ {max_weeks_new} veckor)"
-    tier_damen = f"🚺 DAMEN (Target ROAS: {t_roas_female}, Min Stock: {t_stock_female})"
+    tier_nyheter_dam = f"🆕 NYHETER DAMEN (Live ≤ {max_weeks_new} v)"
+    tier_nyheter_herr = f"🆕 NYHETER HERREN (Live ≤ {max_weeks_new} v)"
+    tier_damen = f"by🚺 DAMEN (Target ROAS: {t_roas_female}, Min Stock: {t_stock_female})"
     tier_herren = f"🚹 HERREN (Target ROAS: {t_roas_male}, Min Stock: {t_stock_male})"
     tier_low_stock = "⚠️ LOW STOCK (< 10 i totalt lager)"
     tier_catch_all = "📦 ÖVRIGA / RESTHINK (Samlingshink)"
 
     def assign_strategic_tier(row):
-        # Prioritet 1: Nyheter
-        if row['Weeks_Online'] <= max_weeks_new:
-            return tier_nyheter
-            
         gender = str(row['Gender_Clean']).upper()
-        
-        # Prioritet 2: Damen (Female Strategy)
-        if any(g in gender for g in ['FEMALE', 'WOMEN', 'DAM', 'WOMAN']):
+        # Inkluderar UNISEX i Female-kategorin
+        is_female = any(g in gender for g in ['FEMALE', 'WOMEN', 'DAM', 'WOMAN', 'UNISEX'])
+        is_male = any(g in gender for g in ['MALE', 'MEN', 'HERR', 'MAN']) and not 'UNISEX' in gender
+
+        # PRIORITET 1 & 2: NYHETER (Damen/Unisex vs Herren)
+        if row['Weeks_Online'] <= max_weeks_new:
+            if is_female:
+                return tier_nyheter_dam
+            elif is_male:
+                return tier_nyheter_herr
+            else:
+                return tier_nyheter_dam  # Fallback om kön är okänt
+
+        # PRIORITET 3: DAMEN & UNISEX STRATEGY
+        if is_female:
             if row['Total_Stock'] >= t_stock_female and row['ROAS_Actual'] >= t_roas_female:
                 return tier_damen
 
-        # Prioritet 3: Herren (Male Strategy)
-        if any(g in gender for g in ['MALE', 'MEN', 'HERR', 'MAN']):
+        # PRIORITET 4: HERREN STRATEGY
+        if is_male:
             if row['Total_Stock'] >= t_stock_male and row['ROAS_Actual'] >= t_roas_male:
                 return tier_herren
 
-        # Prioritet 4: Low Stock (< 10 i totalt lager per variant)
+        # PRIORITET 5: LOW STOCK (< 10 i lager per Zalando-variant)
         if row['Total_Stock'] < 10:
             return tier_low_stock
-            
-        # Prioritet 5: Resthink / Övriga
+
+        # PRIORITET 6: CATCH-ALL / RESTHINK
         return tier_catch_all
-        
+
     df['Tier'] = df.apply(assign_strategic_tier, axis=1)
 
     # Target ROAS-tilldelning
     tier_series = df['Tier'].astype(str)
     conditions = [
-        tier_series.str.contains("NYHETER", na=False),
+        tier_series.str.contains("NYHETER DAMEN", na=False),
+        tier_series.str.contains("NYHETER HERREN", na=False),
         tier_series.str.contains("DAMEN", na=False),
         tier_series.str.contains("HERREN", na=False),
         tier_series.str.contains("LOW STOCK", na=False)
     ]
     choices = [
         float(t_roas_female),
+        float(t_roas_male),
         float(t_roas_female),
         float(t_roas_male),
         0.0
@@ -361,7 +372,14 @@ if z_marketing and stock_file:
     st.divider()
 
     # --- STRATEGISKA KAMPANJHINKAR & ÖVERSIKT ---
-    strategic_tiers = [tier_nyheter, tier_damen, tier_herren, tier_low_stock, tier_catch_all]
+    strategic_tiers = [
+        tier_nyheter_dam,
+        tier_nyheter_herr,
+        tier_damen,
+        tier_herren,
+        tier_low_stock,
+        tier_catch_all
+    ]
 
     summary_data = []
     total_skus_count = len(df)
