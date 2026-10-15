@@ -285,8 +285,7 @@ if z_marketing and stock_file:
     df = df.drop_duplicates(subset=['Article']).copy()
 
     # --- STRATEGISK LOGIK (EXKLUSIVA HINKAR) ---
-    tier_nyheter_dam = f"🆕 NYHETER DAMEN & UNISEX (Live ≤ {max_weeks_new} v)"
-    tier_nyheter_herr = f"🆕 NYHETER HERREN (Live ≤ {max_weeks_new} v)"
+    tier_nyheter = f"🆕 NYHETER (Live ≤ {max_weeks_new} v)"
     tier_damen = f"🚺 DAMEN & UNISEX (Target ROAS: {t_roas_female}, Min Stock: {t_stock_female})"
     tier_herren = f"🚹 HERREN (Target ROAS: {t_roas_male}, Min Stock: {t_stock_male})"
     tier_low_stock = "⚠️ LOW STOCK (< 10 i totalt lager)"
