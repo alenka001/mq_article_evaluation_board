@@ -93,12 +93,18 @@ with st.sidebar:
     max_weeks_new = st.number_input("Max veckor live för Nyheter (Hink 1)", min_value=1, max_value=52, value=1, help="Produkter som lades ut till försäljning för första gången inom valda antal veckor sorteras till Nyhetshinken")
     
     st.divider()
-    st.header("💰 Budget & Tiers (Standard-mål)")
-    total_monthly_budget = st.number_input("Total Budget (SEK)", min_value=0, value=300000)
-    t_stock = st.number_input("Min Stock (Standard Strategy)", value=10)
-    t_roas_base = st.number_input("Target ROAS (Standard Strategy)", value=8.0)
-    
+    st.header("🚺 Damen (Female Strategy)")
+    t_stock_female = st.number_input("Min Stock (Damen)", min_value=1, value=10)
+    t_roas_female = st.number_input("Target ROAS (Damen)", min_value=0.0, value=8.0, step=0.5)
+
     st.divider()
+    st.header("🚹 Herren (Male Strategy)")
+    t_stock_male = st.number_input("Min Stock (Herren)", min_value=1, value=10)
+    t_roas_male = st.number_input("Target ROAS (Herren)", min_value=0.0, value=8.0, step=0.5)
+
+    st.divider()
+    st.header("💰 Budget & Övrigt")
+    total_monthly_budget = st.number_input("Total Budget (SEK)", min_value=0, value=300000)
     days_threshold = st.slider("Stock Alert (Days):", 1, 14, 5)
 
 # --- 3. DATA PROCESSING ---
@@ -190,14 +196,12 @@ if z_marketing and stock_file:
     if art_perf_file:
         df_ap = load_csv(art_perf_file)
         ap_sku_col = find_col(df_ap, ['Article variant', 'Variant SKU', 'Config SKU', 'SKU'], 0)
-        # Sök specifikt efter Kolumn J / "Date first on offer"
         ap_date_col = find_col(df_ap, ['Date first on offer', 'first on offer', 'offer date'], 9)
         
         if ap_date_col in df_ap.columns:
             df_ap['Std_SKU'] = df_ap[ap_sku_col].apply(standardize_sku)
             df_ap['Parsed_Date'] = pd.to_datetime(df_ap[ap_date_col], errors='coerce')
             
-            # Beräkna antal veckor sedan "Date first on offer" fram till idag
             today = pd.Timestamp.now()
             df_ap['Weeks_Online'] = (today - df_ap['Parsed_Date']).dt.days / 7.0
             df_ap['Weeks_Online'] = df_ap['Weeks_Online'].fillna(999.0)
@@ -212,7 +216,6 @@ if z_marketing and stock_file:
 
     df_s_raw['Article_Match'] = df_s_raw[inv_sku_col].apply(standardize_sku)
     
-    # Säasonsfilter från Lagerfilen
     if season_col in df_s_raw.columns:
         seasons_raw = df_s_raw[season_col].dropna().unique().astype(str).tolist()
         all_seasons = sorted([s for s in seasons_raw if s.strip() and s.lower() != 'nan'])
@@ -247,7 +250,7 @@ if z_marketing and stock_file:
 
     # 6. Sammanfogning och Deduplicering på SKU-nivå
     df_m_latest['Article'] = df_m_latest[sku_col].apply(standardize_sku)
-    df_m_latest['Gender_Clean'] = df_m_latest[gender_col].astype(str).str.upper()
+    df_m_latest['Gender_Clean'] = df_m_latest[gender_col].astype(str).str.upper().str.strip()
     
     df_m_agg = df_m_latest.groupby('Article').agg({
         'GMV_Val': 'sum', 
@@ -259,15 +262,11 @@ if z_marketing and stock_file:
     
     df = pd.merge(df_m_agg, df_s_pivot, left_on='Article', right_on='Article_Match', how='left')
     
-    # Typsäker fyllning av NaN
     num_cols = df.select_dtypes(include=[np.number]).columns
     df[num_cols] = df[num_cols].fillna(0.0)
     str_cols = df.select_dtypes(include=['object', 'string']).columns
     df[str_cols] = df[str_cols].fillna("")
 
-    df['Total_Stock'] = df['Total_Stock'].replace(0, 1.0)
-
-    # Bestäm Veckor Online baserat på "Date first on offer"
     def resolve_weeks_online(row):
         sku = row['Article']
         if sku in weeks_online_map:
@@ -282,43 +281,57 @@ if z_marketing and stock_file:
     df['Daily_Velocity'] = df['Sold_Val'] / 7
     df['Days_Left'] = df['Total_Stock'] / df['Daily_Velocity'].replace(0, 0.001)
 
-    # GARANTERAD DEDUPLICERING (1 rad per SKU)
+    # GARANTERAD DEDUPLICERING (1 rad per unikt SKU)
     df = df.drop_duplicates(subset=['Article']).copy()
 
     # --- STRATEGISK LOGIK (EXKLUSIVA HINKAR) ---
-    tier_new_arrivals = f"🆕 NEW ARRIVALS (Live ≤ {max_weeks_new} veckor)"
-    tier_standard = f"🔥 STANDARD STRATEGY (Target ROAS: {t_roas_base})"
-    tier_low_perf = "⚠️ LOW PERFORMANCE / PAUSED STRATEGY"
+    tier_nyheter = f"🆕 NYHETER (Live ≤ {max_weeks_new} veckor)"
+    tier_damen = f"🚺 DAMEN (Target ROAS: {t_roas_female}, Min Stock: {t_stock_female})"
+    tier_herren = f"🚹 HERREN (Target ROAS: {t_roas_male}, Min Stock: {t_stock_male})"
+    tier_low_stock = "⚠️ LOW STOCK (< 10 i totalt lager)"
+    tier_catch_all = "📦 ÖVRIGA / RESTHINK (Samlingshink)"
 
     def assign_strategic_tier(row):
-        # Prioritet 1: Nyheter (Baserat på Date first on offer & veckor i sidomenyn)
+        # Prioritet 1: Nyheter
         if row['Weeks_Online'] <= max_weeks_new:
-            return tier_new_arrivals
+            return tier_nyheter
             
-        # Prioritet 2: Standard Strategy
-        if row['Total_Stock'] >= t_stock and row['ROAS_Actual'] >= t_roas_base:
-            return tier_standard
+        gender = str(row['Gender_Clean']).upper()
+        
+        # Prioritet 2: Damen (Female Strategy)
+        if any(g in gender for g in ['FEMALE', 'WOMEN', 'DAM', 'WOMAN']):
+            if row['Total_Stock'] >= t_stock_female and row['ROAS_Actual'] >= t_roas_female:
+                return tier_damen
+
+        # Prioritet 3: Herren (Male Strategy)
+        if any(g in gender for g in ['MALE', 'MEN', 'HERR', 'MAN']):
+            if row['Total_Stock'] >= t_stock_male and row['ROAS_Actual'] >= t_roas_male:
+                return tier_herren
+
+        # Prioritet 4: Low Stock (< 10 i totalt lager per variant)
+        if row['Total_Stock'] < 10:
+            return tier_low_stock
             
-        # Prioritet 3: Low Performance
-        if row['Total_Stock'] >= 1:
-            return tier_low_perf
-            
-        return "EXCLUDE"
+        # Prioritet 5: Resthink / Övriga
+        return tier_catch_all
         
     df['Tier'] = df.apply(assign_strategic_tier, axis=1)
-    df = df[df['Tier'] != "EXCLUDE"].copy()
 
-    # Säker np.select för Target_ROAS
+    # Target ROAS-tilldelning
     tier_series = df['Tier'].astype(str)
     conditions = [
-        tier_series.str.contains("NEW ARRIVALS", na=False),
-        tier_series.str.contains("LOW PERFORMANCE", na=False)
+        tier_series.str.contains("NYHETER", na=False),
+        tier_series.str.contains("DAMEN", na=False),
+        tier_series.str.contains("HERREN", na=False),
+        tier_series.str.contains("LOW STOCK", na=False)
     ]
     choices = [
-        float(t_roas_base),
+        float(t_roas_female),
+        float(t_roas_female),
+        float(t_roas_male),
         0.0
     ]
-    df['Target_ROAS'] = np.select(conditions, choices, default=float(t_roas_base))
+    df['Target_ROAS'] = np.select(conditions, choices, default=0.0)
 
     # --- 4. DASHBOARD OUTPUT ---
     st.header(f"📊 MQ Vecka {int(latest_week) if latest_week > 0 else 'Alla Veckor'} - Strategisk Planering")
@@ -348,9 +361,8 @@ if z_marketing and stock_file:
     st.divider()
 
     # --- STRATEGISKA KAMPANJHINKAR & ÖVERSIKT ---
-    strategic_tiers = [tier_new_arrivals, tier_standard, tier_low_perf]
+    strategic_tiers = [tier_nyheter, tier_damen, tier_herren, tier_low_stock, tier_catch_all]
 
-    # Skapa översiktsdata för alla hinkar
     summary_data = []
     total_skus_count = len(df)
     
@@ -366,7 +378,6 @@ if z_marketing and stock_file:
 
     summary_df = pd.DataFrame(summary_data)
 
-    # Visa Översiktstabell & Export-knapp
     st.subheader("📋 Översikt över Kampanjhinkar")
     st.dataframe(summary_df, use_container_width=True)
 
@@ -381,16 +392,13 @@ if z_marketing and stock_file:
     st.divider()
     st.subheader("📦 Strategiska Kampanjhinkar (Deduplicerade SKUs)")
 
-    # Rendera enbart hinkar som har minst 1 SKU
     for tier in strategic_tiers:
         tier_df = df[df['Tier'] == tier].copy()
         skus = tier_df['Article'].unique().tolist()
         
-        # Visa endast om hinken har minst 1 SKU!
         if len(skus) > 0:
             st.markdown(f"### {tier}")
             st.metric("Antal Unika SKUs", len(skus))
-            
             st.text_area("SKUs (Kommaseparerad)", ",".join(skus), height=120, key=f"t_all_{tier}")
             
             clean_file_label = re.sub(r'[^\w\s-]', '', tier).strip().replace(' ', '_')
