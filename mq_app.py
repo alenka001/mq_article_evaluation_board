@@ -90,17 +90,17 @@ with st.sidebar:
     
     st.divider()
     st.header("🆕 Nyhets-inställningar")
-    max_weeks_new = st.number_input("Max veckor live för Nyheter", min_value=1, max_value=52, value=1, help="Produkter som lades ut till försäljning för första gången inom valda antal veckor sorteras till Nyhetshinkarna.")
+    max_weeks_new = st.number_input("Max veckor live för Nyheter", min_value=1, max_value=52, value=1, help="Produkter som lades ut till försäljning för första gången inom valda antal veckor sorteras till Nyhetshinken.")
     
     st.divider()
-    st.header("🚺 Damen & Unisex Strategy")
-    t_stock_female = st.number_input("Min Stock (Damen/Unisex)", min_value=1, value=10)
-    t_roas_female = st.number_input("Target ROAS (Damen/Unisex)", min_value=0.0, value=8.0, step=0.5)
+    st.header("🚺 Female & Unisex Strategy")
+    t_stock_female = st.number_input("Min Stock (Female/Unisex)", min_value=1, value=10)
+    t_roas_female = st.number_input("Target ROAS (Female/Unisex)", min_value=0.0, value=8.0, step=0.5)
 
     st.divider()
-    st.header("🚹 Herren Strategy")
-    t_stock_male = st.number_input("Min Stock (Herren)", min_value=1, value=10)
-    t_roas_male = st.number_input("Target ROAS (Herren)", min_value=0.0, value=8.0, step=0.5)
+    st.header("🚹 Male Strategy")
+    t_stock_male = st.number_input("Min Stock (Male)", min_value=1, value=10)
+    t_roas_male = st.number_input("Target ROAS (Male)", min_value=0.0, value=8.0, step=0.5)
 
     st.divider()
     st.header("💰 Budget & Övrigt")
@@ -285,42 +285,36 @@ if z_marketing and stock_file:
     df = df.drop_duplicates(subset=['Article']).copy()
 
     # --- STRATEGISK LOGIK (EXKLUSIVA HINKAR) ---
-    tier_nyheter = f"🆕 NYHETER (Live ≤ {max_weeks_new} v)"
-    tier_damen = f"🚺 DAMEN & UNISEX (Target ROAS: {t_roas_female}, Min Stock: {t_stock_female})"
-    tier_herren = f"🚹 HERREN (Target ROAS: {t_roas_male}, Min Stock: {t_stock_male})"
+    tier_news = f"🆕 NEWS (Live ≤ {max_weeks_new} v)"
+    tier_female_unisex = f"🚺 FEMALE + UNISEX (Target ROAS: {t_roas_female}, Min Stock: {t_stock_female})"
+    tier_male = f"🚹 MALE (Target ROAS: {t_roas_male}, Min Stock: {t_stock_male})"
     tier_low_stock = "⚠️ LOW STOCK (< 10 i totalt lager)"
     tier_catch_all = "📦 CATCH ALL / RESTHINK (Säkerhetsnät)"
 
     def assign_strategic_tier(row):
+        # 1. HINK 1: ENBART EN SINGLE NEWS BUCKET FOR ALLA ITEMS
+        if row['Weeks_Online'] <= max_weeks_new:
+            return tier_news
+
         gender = str(row['Gender_Clean']).upper()
-        # Damen inkluderar FEMALE och UNISEX
         is_female = any(g in gender for g in ['FEMALE', 'WOMEN', 'DAM', 'WOMAN', 'UNISEX'])
         is_male = any(g in gender for g in ['MALE', 'MEN', 'HERR', 'MAN']) and not 'UNISEX' in gender
 
-        # PRIORITET 1 & 2: NYHETER
-        if row['Weeks_Online'] <= max_weeks_new:
-            if is_female:
-                return tier_nyheter_dam
-            elif is_male:
-                return tier_nyheter_herr
-            else:
-                return tier_nyheter_dam  # Fallback om könssträng saknas
-
-        # PRIORITET 3: DAMEN & UNISEX STRATEGY
+        # 2. HINK 2: FEMALE + UNISEX
         if is_female:
             if row['Total_Stock'] >= t_stock_female and row['ROAS_Actual'] >= t_roas_female:
-                return tier_damen
+                return tier_female_unisex
 
-        # PRIORITET 4: HERREN STRATEGY
+        # 3. HINK 3: MALE
         if is_male:
             if row['Total_Stock'] >= t_stock_male and row['ROAS_Actual'] >= t_roas_male:
-                return tier_herren
+                return tier_male
 
-        # PRIORITET 5: LOW STOCK (< 10 i totalt lager per Zalando-variant)
+        # 4. HINK 4: LOW ITEM BUCKET (< 10 i lager per Zalando-variant)
         if row['Total_Stock'] < 10:
             return tier_low_stock
 
-        # PRIORITET 6: CATCH ALL / RESTHINK
+        # 5. HINK 5: CATCH ALL / RESTHINK (SÄKERHETSNÄT)
         return tier_catch_all
 
     df['Tier'] = df.apply(assign_strategic_tier, axis=1)
@@ -328,15 +322,13 @@ if z_marketing and stock_file:
     # Target ROAS-tilldelning
     tier_series = df['Tier'].astype(str)
     conditions = [
-        tier_series.str.contains("NYHETER DAMEN", na=False),
-        tier_series.str.contains("NYHETER HERREN", na=False),
-        tier_series.str.contains("DAMEN", na=False),
-        tier_series.str.contains("HERREN", na=False),
+        tier_series.str.contains("NEWS", na=False),
+        tier_series.str.contains("FEMALE", na=False),
+        tier_series.str.contains("MALE", na=False),
         tier_series.str.contains("LOW STOCK", na=False)
     ]
     choices = [
         float(t_roas_female),
-        float(t_roas_male),
         float(t_roas_female),
         float(t_roas_male),
         0.0
@@ -370,34 +362,11 @@ if z_marketing and stock_file:
 
     st.divider()
 
-    # --- 5. SAMLAD NYHETSHINK (EXPORT & ÖVERSIKT) ---
-    all_news_df = df[df['Tier'].isin([tier_nyheter_dam, tier_nyheter_herr])].copy()
-    all_news_skus = all_news_df['Article'].unique().tolist()
-
-    st.subheader("🆕 TOTALT NYHETER (Samlad Hink för Alla Nyheter)")
-    col_n1, col_n2 = st.columns([1, 3])
-    with col_n1:
-        st.metric("Totalt Antal Unika Nyhets-SKUs", len(all_news_skus))
-        if len(all_news_skus) > 0:
-            st.download_button(
-                label="📥 Ladda ner Samlad Nyhetshink (CSV)",
-                data=pd.DataFrame(all_news_skus, columns=['SKU']).to_csv(index=False, header=False),
-                file_name=f"MQ_Campaign_TOTALT_NYHETER.csv",
-                mime="text/csv",
-                key="dl_total_news"
-            )
-    with col_n2:
-        if len(all_news_skus) > 0:
-            st.text_area("Alla Nyhets-SKUs (Kommaseparerad)", ",".join(all_news_skus), height=100, key="t_all_news")
-
-    st.divider()
-
-    # --- 6. STRATEGISKA KAMPANJHINKAR & ÖVERSIKT ---
+    # --- 5. STRATEGISKA KAMPANJHINKAR & ÖVERSIKT ---
     strategic_tiers = [
-        tier_nyheter_dam,
-        tier_nyheter_herr,
-        tier_damen,
-        tier_herren,
+        tier_news,
+        tier_female_unisex,
+        tier_male,
         tier_low_stock,
         tier_catch_all
     ]
