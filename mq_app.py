@@ -29,7 +29,7 @@ def optimize_memory(df):
     return df
 
 def clean_numeric(series):
-    """Tvättar numeriska strängar och fyller NaN med 0.0."""
+    """Tvättar numeriska strängar och konverterar kommatecken till punkt."""
     if pd.api.types.is_numeric_dtype(series):
         return series.fillna(0.0)
     def handle_string(x):
@@ -45,7 +45,7 @@ def clean_numeric(series):
     return series.apply(handle_string).fillna(0.0)
 
 def standardize_sku(sku):
-    """Standardiserar SKU till Config-nivå (t.ex. ABC12D345-E67)."""
+    """Standardiserar SKU till Config-nivå (13 tecken, t.ex. ABC12D345-E67)."""
     s = str(sku).strip().upper().replace('.0', '')
     if '-' in s:
         parts = s.split('-')
@@ -60,11 +60,11 @@ def load_csv(file):
     raw_head = file.read(60000)
     file.seek(0)
     try:
-        sample = raw_head.decode('latin-1')
-        encoding = 'latin-1'
-    except:
         sample = raw_head.decode('utf-8')
         encoding = 'utf-8'
+    except:
+        sample = raw_head.decode('latin-1')
+        encoding = 'latin-1'
     sep = ';' if sample.count(';') > sample.count(',') else ','
     file.seek(0)
     df = pd.read_csv(file, sep=sep, encoding=encoding, on_bad_lines='skip')
@@ -72,7 +72,7 @@ def load_csv(file):
     return optimize_memory(df)
 
 def find_col(df, preferred_names, fallback_idx=0):
-    """Hittar kolumnnamn skiftlägesoberoende."""
+    """Hittar kolumnnamn skiftlägesoberoende med fallback."""
     cols = df.columns.tolist()
     for pref in preferred_names:
         for c in cols:
@@ -88,8 +88,8 @@ with st.sidebar:
     
     st.divider()
     st.header("⚙️ Inställningar för Hinkar")
-    t_stock_low = st.number_input("Max lager för Low Stock (mindre än)", min_value=1, value=10)
-    min_geo_stock = st.number_input("Min lager för Geografiska Hinkar", min_value=1, value=1)
+    t_stock_low = st.number_input("Max lager för Low Stock (<)", min_value=1, value=10)
+    min_geo_stock = st.number_input("Min lager för Geografiska Hinkar (≥)", min_value=1, value=10)
     
     st.divider()
     total_monthly_budget = st.number_input("Total Budget (SEK)", min_value=0, value=300000)
@@ -99,85 +99,98 @@ if z_marketing and inv_status_file:
     df_m_raw = load_csv(z_marketing)
     df_inv_raw = load_csv(inv_status_file)
 
-    # 1. Identifiera SKU och Status ur den gemensamma filen
+    # 1. Bearbeta Lager och Status ur e2c5d616...
     inv_sku_col = find_col(df_inv_raw, ['zalando_article_variant', 'partner_article_variant', 'sku', 'config_sku'], 4)
     stat_cluster_col = find_col(df_inv_raw, ['status_cluster'], -1)
     name_col = find_col(df_inv_raw, ['article_name', 'name'], 6)
 
     df_inv_raw['Std_SKU'] = df_inv_raw[inv_sku_col].apply(standardize_sku)
     
-    # Extrahera unika SKUs med status 'live'
+    # Identifiera Live-artiklar
     if stat_cluster_col in df_inv_raw.columns:
         df_inv_raw['Status_Clean'] = df_inv_raw[stat_cluster_col].astype(str).str.strip().str.lower()
         live_skus_set = set(df_inv_raw[df_inv_raw['Status_Clean'] == 'live']['Std_SKU'].unique())
     else:
-        # Fallback om kolumnen saknas
         live_skus_set = set(df_inv_raw['Std_SKU'].unique())
 
-    # 2. Aggregera lager ur samma fil
-    stock_cols = [c for c in df_inv_raw.columns if 'stock' in c]
+    # Hitta och rengör alla lagerkolumner (ZFS + PF)
+    stock_cols = [c for c in df_inv_raw.columns if 'stock' in c or 'zfs' in c or 'pf' in c]
     if not stock_cols:
         df_inv_raw['stock'] = 1.0
         stock_cols = ['stock']
     for c in stock_cols: 
         df_inv_raw[c] = clean_numeric(df_inv_raw[c])
 
+    # Aggregera totalt lagersaldo per unikt Config-SKU
     df_s_pivot = df_inv_raw.groupby('Std_SKU').agg({
         name_col if name_col in df_inv_raw.columns else 'Std_SKU': 'first',
         **{c: 'sum' for c in stock_cols}
     }).reset_index()
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
 
-    # 3. Bearbeta SKU Report (Country Split)
+    # 2. Bearbeta SKU Report (Country Split / Marknadsföringsfil)
     m_sku_col = find_col(df_m_raw, ['config sku', 'sku', 'article variant sku', 'partner sku'], 6)
-    country_col = find_col(df_m_raw, ['country', 'market'], -1)
-    spend_col = find_col(df_m_raw, ['budget spent', 'spend'], -1)
-    gmv_col = find_col(df_m_raw, ['gmv'], -1)
-
+    country_col = find_col(df_m_raw, ['country', 'market', 'sales channel', 'land'], -1)
+    
     df_m_raw['Article'] = df_m_raw[m_sku_col].apply(standardize_sku)
-    df_m_raw['Country_Clean'] = df_m_raw[country_col].astype(str).str.strip().str.lower()
-    df_m_raw['Spend_Val'] = clean_numeric(df_m_raw[spend_col]) if spend_col in df_m_raw.columns else 0.0
-    df_m_raw['GMV_Val'] = clean_numeric(df_m_raw[gmv_col]) if gmv_col in df_m_raw.columns else 0.0
+    has_country = country_col in df_m_raw.columns
+    if has_country:
+        df_m_raw['Country_Clean'] = df_m_raw[country_col].astype(str).str.strip().str.lower()
+    else:
+        df_m_raw['Country_Clean'] = 'all'
 
-    # Koppla ihop Marknadsföringsdata med Lagerdata
-    df_all = pd.merge(df_s_pivot, df_m_raw, left_on='Std_SKU', right_on='Article', how='inner')
-    df_all = df_all[df_all['Total_Stock'] >= 1].copy()
+    # Lista över marknadsländer
+    de_countries = ['de', 'germany', 'tyskland']
+    nordic_countries = ['se', 'dk', 'fi', 'no', 'sweden', 'denmark', 'finland']
+    benelux_pl_fr_countries = ['nl', 'be', 'pl', 'fr', 'netherlands', 'belgium', 'poland', 'france']
 
-    # Definiera Geografiska Marknader
-    de_countries = ['de']
-    nordic_countries = ['se', 'dk', 'fi']
-    benelux_pl_fr_countries = ['nl', 'be', 'pl', 'fr']
+    # 3. Knyta ihop lager med marknadsdata
+    # Filtrera på artiklar som har minst 1 i lager och status Live
+    df_eligible = df_s_pivot[(df_s_pivot['Total_Stock'] >= min_geo_stock) & (df_s_pivot['Std_SKU'].isin(live_skus_set))].copy()
 
-    # Extrahera Geografiska SKUs
-    skus_de = df_all[(df_all['Country_Clean'].isin(de_countries)) & (df_all['Total_Stock'] >= min_geo_stock)]['Article'].unique().tolist()
-    skus_nordics = df_all[(df_all['Country_Clean'].isin(nordic_countries)) & (df_all['Total_Stock'] >= min_geo_stock)]['Article'].unique().tolist()
-    skus_benelux = df_all[(df_all['Country_Clean'].isin(benelux_pl_fr_countries)) & (df_all['Total_Stock'] >= min_geo_stock)]['Article'].unique().tolist()
+    if has_country and df_m_raw['Country_Clean'].nunique() > 1:
+        # Om SKU-rapporten har landsfördelning per rad
+        m_grouped = df_m_raw.groupby(['Article', 'Country_Clean']).size().reset_index(name='count')
+        df_merged = pd.merge(df_eligible, m_grouped, left_on='Std_SKU', right_on='Article', how='left')
 
+        skus_de = df_merged[df_merged['Country_Clean'].isin(de_countries)]['Std_SKU'].unique().tolist()
+        skus_nordics = df_merged[df_merged['Country_Clean'].isin(nordic_countries)]['Std_SKU'].unique().tolist()
+        skus_benelux = df_merged[df_merged['Country_Clean'].isin(benelux_pl_fr_countries)]['Std_SKU'].unique().tolist()
+    else:
+        # Om rapporten saknar landsfördelning styrs alla starka lager-SKUs till huvudmarknaderna
+        all_strong_skus = df_eligible['Std_SKU'].unique().tolist()
+        skus_de = all_strong_skus
+        skus_nordics = all_strong_skus
+        skus_benelux = all_strong_skus
+
+    # Global mängd av SKUs i de geografiska kampanjerna
     all_geo_skus_set = set(skus_de) | set(skus_nordics) | set(skus_benelux)
 
-    # 4. Bearbeta Low Stock och Reserv på unika artiklar
-    df_unique_articles = df_s_pivot.drop_duplicates(subset=['Std_SKU']).copy()
-    df_unique_articles = df_unique_articles[df_unique_articles['Total_Stock'] >= 1].copy()
-
-    # Low Stock: Inte i Geo-hinkar, Live i statusfilen och Total_Stock < t_stock_low
+    # 4. Bearbeta Low Stock och Reserv
+    # Low Stock: Endast artiklar med Total_Stock < t_stock_low, minst 1 i lager, Live, och EJ i Geo
     low_stock_mask = (
-        (~df_unique_articles['Std_SKU'].isin(all_geo_skus_set)) &
-        (df_unique_articles['Std_SKU'].isin(live_skus_set)) &
-        (df_unique_articles['Total_Stock'] < t_stock_low)
+        (~df_s_pivot['Std_SKU'].isin(all_geo_skus_set)) &
+        (df_s_pivot['Std_SKU'].isin(live_skus_set)) &
+        (df_s_pivot['Total_Stock'] >= 1) &
+        (df_s_pivot['Total_Stock'] < t_stock_low)
     )
-    skus_low_stock = df_unique_articles[low_stock_mask]['Std_SKU'].unique().tolist()
+    skus_low_stock = df_s_pivot[low_stock_mask]['Std_SKU'].unique().tolist()
 
-    # Reserv / Säkerhetsnät: Alla övriga artiklar med lager
+    # Reserv / Säkerhetsnät: Resterande artiklar med lager >= 1 som inte tagits upp av Geo eller Low Stock
     used_skus_set = all_geo_skus_set | set(skus_low_stock)
-    skus_reserv = df_unique_articles[~df_unique_articles['Std_SKU'].isin(used_skus_set)]['Std_SKU'].unique().tolist()
+    reserv_mask = (
+        (~df_s_pivot['Std_SKU'].isin(used_skus_set)) &
+        (df_s_pivot['Total_Stock'] >= 1)
+    )
+    skus_reserv = df_s_pivot[reserv_mask]['Std_SKU'].unique().tolist()
 
     # --- 4. DASHBOARD OUTPUT ---
     st.header("📊 Resultat & Kampanjöversikt")
     
     m1, m2, m3 = st.columns(3)
-    m1.metric("Totalt Aktiva Lagerartiklar", len(df_unique_articles))
+    m1.metric("Unika SKUs med Lager (≥ 1)", len(df_s_pivot[df_s_pivot['Total_Stock'] >= 1]))
     m2.metric("Unika SKUs i Geografiska Hinkar", len(all_geo_skus_set))
-    m3.metric("Kvalificerade Low Stock SKUs (Live)", len(skus_low_stock))
+    m3.metric("Kvalificerade Low Stock SKUs", len(skus_low_stock))
 
     st.divider()
 
