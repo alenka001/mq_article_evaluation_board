@@ -219,4 +219,8 @@ if z_marketing and inv_status_file:
                 )
         with c2:
             if len(sku_list) > 0:
-                st.text_area(f"SKUs för {file_tag}", ",".join(sku_list), height=8
+                st.text_area(f"SKUs för {file_tag}", ",".join(sku_list), height=80, key=f"txt_{file_tag}")
+        st.divider()
+
+else:
+    st.info("👋 Ladda upp SKU Report och Inventory & Status-filen i sidomenyn för att köra segmenteringen.")
