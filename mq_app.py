@@ -29,6 +29,7 @@ def optimize_memory(df):
     return df
 
 def clean_numeric(series):
+    """Tvättar numeriska strängar och fyller NaN med 0.0."""
     if pd.api.types.is_numeric_dtype(series):
         return series.fillna(0.0)
     def handle_string(x):
@@ -54,6 +55,7 @@ def standardize_sku(sku):
 
 @st.cache_data(show_spinner=False)
 def load_csv(file):
+    """Läser in CSV med automatisk avskiljare och minnesoptimering."""
     if file is None: return None
     raw_head = file.read(60000)
     file.seek(0)
@@ -70,6 +72,7 @@ def load_csv(file):
     return optimize_memory(df)
 
 def find_col(df, preferred_names, fallback_idx=0):
+    """Hittar kolumnnamn skiftlägesoberoende."""
     cols = df.columns.tolist()
     for pref in preferred_names:
         for c in cols:
@@ -81,8 +84,7 @@ def find_col(df, preferred_names, fallback_idx=0):
 with st.sidebar:
     st.header("📂 Data Upload")
     z_marketing = st.file_uploader("1. SKU Report (Country Split)", type="csv")
-    stock_file = st.file_uploader("2. Inventory File", type="csv")
-    status_file = st.file_uploader("3. Statusfil (e2c5d616...)", type="csv")
+    inv_status_file = st.file_uploader("2. Inventory & Status File (e2c5d616...)", type="csv")
     
     st.divider()
     st.header("⚙️ Inställningar för Hinkar")
@@ -93,35 +95,35 @@ with st.sidebar:
     total_monthly_budget = st.number_input("Total Budget (SEK)", min_value=0, value=300000)
 
 # --- 3. DATA PROCESSING ---
-if z_marketing and stock_file and status_file:
+if z_marketing and inv_status_file:
     df_m_raw = load_csv(z_marketing)
-    df_s_raw = load_csv(stock_file)
-    df_stat_raw = load_csv(status_file)
+    df_inv_raw = load_csv(inv_status_file)
 
-    # 1. Bearbeta Statusfil (e2c5d616...)
-    stat_sku_col = find_col(df_stat_raw, ['zalando_article_variant', 'partner_article_variant', 'ean', 'sku'], 4)
-    stat_cluster_col = find_col(df_stat_raw, ['status_cluster'], 20)
+    # 1. Identifiera SKU och Status ur den gemensamma filen
+    inv_sku_col = find_col(df_inv_raw, ['zalando_article_variant', 'partner_article_variant', 'sku', 'config_sku'], 4)
+    stat_cluster_col = find_col(df_inv_raw, ['status_cluster'], -1)
+    name_col = find_col(df_inv_raw, ['article_name', 'name'], 6)
+
+    df_inv_raw['Std_SKU'] = df_inv_raw[inv_sku_col].apply(standardize_sku)
     
-    df_stat_raw['Std_SKU'] = df_stat_raw[stat_sku_col].apply(standardize_sku)
-    df_stat_raw['Status_Clean'] = df_stat_raw[stat_cluster_col].astype(str).str.strip().str.lower()
-    
-    # Extrahera alla SKUs som har minst en 'Live'-status
-    live_skus_set = set(df_stat_raw[df_stat_raw['Status_Clean'] == 'live']['Std_SKU'].unique())
+    # Extrahera unika SKUs med status 'live'
+    if stat_cluster_col in df_inv_raw.columns:
+        df_inv_raw['Status_Clean'] = df_inv_raw[stat_cluster_col].astype(str).str.strip().str.lower()
+        live_skus_set = set(df_inv_raw[df_inv_raw['Status_Clean'] == 'live']['Std_SKU'].unique())
+    else:
+        # Fallback om kolumnen saknas
+        live_skus_set = set(df_inv_raw['Std_SKU'].unique())
 
-    # 2. Bearbeta Lagerdata
-    inv_sku_col = find_col(df_s_raw, ['zalando_article_variant', 'partner_article_variant', 'sku', 'config_sku'], 0)
-    name_col = find_col(df_s_raw, ['article_name', 'name'], 1)
-    df_s_raw['Article_Match'] = df_s_raw[inv_sku_col].apply(standardize_sku)
-
-    stock_cols = [c for c in df_s_raw.columns if 'stock' in c]
+    # 2. Aggregera lager ur samma fil
+    stock_cols = [c for c in df_inv_raw.columns if 'stock' in c]
     if not stock_cols:
-        df_s_raw['stock'] = 1.0
+        df_inv_raw['stock'] = 1.0
         stock_cols = ['stock']
     for c in stock_cols: 
-        df_s_raw[c] = clean_numeric(df_s_raw[c])
+        df_inv_raw[c] = clean_numeric(df_inv_raw[c])
 
-    df_s_pivot = df_s_raw.groupby('Article_Match').agg({
-        name_col if name_col in df_s_raw.columns else 'Article_Match': 'first',
+    df_s_pivot = df_inv_raw.groupby('Std_SKU').agg({
+        name_col if name_col in df_inv_raw.columns else 'Std_SKU': 'first',
         **{c: 'sum' for c in stock_cols}
     }).reset_index()
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
@@ -138,7 +140,7 @@ if z_marketing and stock_file and status_file:
     df_m_raw['GMV_Val'] = clean_numeric(df_m_raw[gmv_col]) if gmv_col in df_m_raw.columns else 0.0
 
     # Koppla ihop Marknadsföringsdata med Lagerdata
-    df_all = pd.merge(df_s_pivot, df_m_raw, left_on='Article_Match', right_on='Article', how='inner')
+    df_all = pd.merge(df_s_pivot, df_m_raw, left_on='Std_SKU', right_on='Article', how='inner')
     df_all = df_all[df_all['Total_Stock'] >= 1].copy()
 
     # Definiera Geografiska Marknader
@@ -151,24 +153,23 @@ if z_marketing and stock_file and status_file:
     skus_nordics = df_all[(df_all['Country_Clean'].isin(nordic_countries)) & (df_all['Total_Stock'] >= min_geo_stock)]['Article'].unique().tolist()
     skus_benelux = df_all[(df_all['Country_Clean'].isin(benelux_pl_fr_countries)) & (df_all['Total_Stock'] >= min_geo_stock)]['Article'].unique().tolist()
 
-    # Mängd av alla SKUs som ingår i någon geografisk hink
     all_geo_skus_set = set(skus_de) | set(skus_nordics) | set(skus_benelux)
 
     # 4. Bearbeta Low Stock och Reserv på unika artiklar
-    df_unique_articles = df_s_pivot.drop_duplicates(subset=['Article_Match']).copy()
+    df_unique_articles = df_s_pivot.drop_duplicates(subset=['Std_SKU']).copy()
     df_unique_articles = df_unique_articles[df_unique_articles['Total_Stock'] >= 1].copy()
 
-    # Low Stock: Inte i Geo-hinkar, Live i statusfilen, och Total_Stock < t_stock_low
+    # Low Stock: Inte i Geo-hinkar, Live i statusfilen och Total_Stock < t_stock_low
     low_stock_mask = (
-        (~df_unique_articles['Article_Match'].isin(all_geo_skus_set)) &
-        (df_unique_articles['Article_Match'].isin(live_skus_set)) &
+        (~df_unique_articles['Std_SKU'].isin(all_geo_skus_set)) &
+        (df_unique_articles['Std_SKU'].isin(live_skus_set)) &
         (df_unique_articles['Total_Stock'] < t_stock_low)
     )
-    skus_low_stock = df_unique_articles[low_stock_mask]['Article_Match'].unique().tolist()
+    skus_low_stock = df_unique_articles[low_stock_mask]['Std_SKU'].unique().tolist()
 
-    # Reserv / Säkerhetsnät: Alla övriga artiklar med lager som varken finns i Geo eller Low Stock
+    # Reserv / Säkerhetsnät: Alla övriga artiklar med lager
     used_skus_set = all_geo_skus_set | set(skus_low_stock)
-    skus_reserv = df_unique_articles[~df_unique_articles['Article_Match'].isin(used_skus_set)]['Article_Match'].unique().tolist()
+    skus_reserv = df_unique_articles[~df_unique_articles['Std_SKU'].isin(used_skus_set)]['Std_SKU'].unique().tolist()
 
     # --- 4. DASHBOARD OUTPUT ---
     st.header("📊 Resultat & Kampanjöversikt")
@@ -207,7 +208,7 @@ if z_marketing and stock_file and status_file:
         st.markdown(f"### {label}")
         c1, c2 = st.columns([1, 3])
         with c1:
-            st.metric(f"Antal SKUs", len(sku_list))
+            st.metric("Antal SKUs", len(sku_list))
             if len(sku_list) > 0:
                 st.download_button(
                     label=f"📥 Ladda ner CSV för {file_tag}",
@@ -218,8 +219,4 @@ if z_marketing and stock_file and status_file:
                 )
         with c2:
             if len(sku_list) > 0:
-                st.text_area(f"SKUs för {file_tag}", ",".join(sku_list), height=80, key=f"txt_{file_tag}")
-        st.divider()
-
-else:
-    st.info("👋 Ladda upp SKU Report, Inventory File och Statusfilen (e2c5d616...) i sidomenyn för att köra segmenteringen.")
+                st.text_area(f"SKUs för {file_tag}", ",".join(sku_list), height=8
